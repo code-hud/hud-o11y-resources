@@ -1,0 +1,57 @@
+# Hud-style flow errors (HTTP endpoints and other flow types: custom, kafka, queues, ...) on the Hud SDK metrics in AMP.
+# Matches Hud's flow error detection: per error (issue_fingerprint), error invocations /
+# flow invocations over [now-20m, now-10m]; alert when errors >= 1 and error rate >= 1% (Hud defaults).
+# The series are cumulative counters in AMP, so increase() (as the "SDK: Hud: *" dashboards do).
+# code_flow_duration_seconds is a native histogram: histogram_count(...) is the invocation count.
+# SQS flows divide by messages (hud_flow_messages_total), as Hud does; all other flows by invocations.
+# http_* labels exist only on HTTP flows; for other flows they are absent and code_flow_name identifies the flow.
+groups:
+  - name: hud-flow-errors
+    interval: 5m
+    rules:
+      - alert: HudFlowErrors
+        expr: |
+          (
+            sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
+              increase(hud_flow_issues_total{code_flow_type!="sqs", http_response_status_code!~"4.."}[10m] offset 10m)
+            )
+            / on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left
+            sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+              histogram_count(increase(code_flow_duration_seconds{code_flow_type!="sqs"}[10m] offset 10m))
+            )
+          ) >= 0.01
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint)
+          sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
+            increase(hud_flow_issues_total{code_flow_type!="sqs", http_response_status_code!~"4.."}[10m] offset 10m)
+          ) >= 1
+        for: 0m
+        labels:
+          severity: warning
+          endpoint_method: "{{ $labels.http_request_method }}"
+          endpoint_path: '{{ if $labels.http_route }}{{ $labels.http_route }}{{ else }}{{ $labels.code_flow_name }}{{ end }}'
+        annotations:
+          summary: "Hud-style errors on {{ $labels.service_name }} {{ $labels.code_flow_name }}"
+          description: "Error {{ $labels.issue_fingerprint }} rate {{ $value | humanizePercentage }} over [now-20m, now-10m] (>=1 error, >=1%)."
+      - alert: HudFlowErrors
+        expr: |
+          (
+            sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
+              increase(hud_flow_issues_total{code_flow_type="sqs", http_response_status_code!~"4.."}[10m] offset 10m)
+            )
+            / on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left
+            sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+              increase(hud_flow_messages_total{code_flow_type="sqs"}[10m] offset 10m)
+            )
+          ) >= 0.01
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint)
+          sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
+            increase(hud_flow_issues_total{code_flow_type="sqs", http_response_status_code!~"4.."}[10m] offset 10m)
+          ) >= 1
+        for: 0m
+        labels:
+          severity: warning
+          endpoint_method: "{{ $labels.http_request_method }}"
+          endpoint_path: '{{ if $labels.http_route }}{{ $labels.http_route }}{{ else }}{{ $labels.code_flow_name }}{{ end }}'
+        annotations:
+          summary: "Hud-style errors on {{ $labels.service_name }} {{ $labels.code_flow_name }}"
+          description: "Error {{ $labels.issue_fingerprint }} rate {{ $value | humanizePercentage }} over [now-20m, now-10m] (>=1 error, >=1%)."
