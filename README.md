@@ -4,7 +4,7 @@ Ready-made OpenSearch dashboards and Prometheus alert rules for data produced by
 
 | Path | Contents |
 | --- | --- |
-| `dashboards/hud.ndjson` | The Hud dashboards ("SDK: Hud: ..."), together with their panels, queries and index pattern. Exported from OpenSearch UI with related objects included. |
+| `dashboards/hud.ndjson` | The Hud dashboards ("Hud: ..."), together with their panels, queries and index pattern. Exported from OpenSearch UI with related objects included. |
 | `rules/hud-alerts.yml` | Prometheus rule groups (Hud flow error alerts) for the Hud SDK metrics. |
 
 Releases are tagged the same way as the Hud SDK releases. Use the tag that matches the SDK version you run.
@@ -53,7 +53,7 @@ If you named the Prometheus connection something other than `hud_amp`, also add 
 2. Open **Assets** (in OpenSearch UI without workspaces: **Dashboards Management** > **Saved objects**).
 3. Click **Import** and select `hud-filled.ndjson`.
 4. Choose **Check for existing objects** > **Automatically overwrite conflicts**, and click **Import**. Keep the original object IDs (do not choose **Create new objects with random IDs**): the "click one for its page" links between the dashboards refer to them.
-5. Go to **Dashboards** and open any of the dashboards whose names start with `SDK: Hud:`. Pick a service in the **Service** filter at the top.
+5. Go to **Dashboards** and open any of the dashboards whose names start with `Hud:`. Pick a service in the **Service** filter at the top.
 
 To upgrade, download `hud.ndjson` from the newer release tag, fill in the IDs again, and import it the same way.
 

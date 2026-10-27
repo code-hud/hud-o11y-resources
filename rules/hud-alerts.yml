@@ -1,7 +1,7 @@
 # Hud-style flow errors (HTTP endpoints and other flow types: custom, kafka, queues, ...) on the Hud SDK metrics in AMP.
 # Matches Hud's flow error detection: per error (issue_fingerprint), error invocations /
 # flow invocations over [now-20m, now-10m]; alert when errors >= 1 and error rate >= 1% (Hud defaults).
-# The series are cumulative counters in AMP, so increase() (as the "SDK: Hud: *" dashboards do).
+# The series are cumulative counters in AMP, so increase() (as the "Hud: *" dashboards do).
 # code_flow_duration_seconds is a native histogram: histogram_count(...) is the invocation count.
 # SQS flows divide by messages (hud_flow_messages_total), as Hud does; all other flows by invocations.
 # http_* labels exist only on HTTP flows; for other flows they are absent and code_flow_name identifies the flow.
