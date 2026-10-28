@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Read-only IAM role that Hud's AWS account can assume to query your AMP workspace and OpenSearch Serverless collection. Delete the stack to revoke access.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Hud access }
+        Parameters: [ExternalId]
+      - Label: { default: Data to share }
+        Parameters: [AmpWorkspaceId, CollectionName]
+
+Parameters:
+  ExternalId:
+    Type: String
+    MinLength: 2
+    MaxLength: 1224
+    AllowedPattern: ^[\w+=,.@:/-]+$
+    Description: Prefilled by Hud's onboarding link and unique to you. Don't change it; Hud sends it when assuming the role, so with any other value Hud can't read your data.
+  AmpWorkspaceId:
+    Type: String
+    AllowedPattern: ^ws-[\w-]+$
+    Description: Your AMP workspace (ws-...) Hud may query.
+  CollectionName:
+    Type: String
+    Default: ""
+    Description: Optional. Your OpenSearch Serverless collection Hud may read (investigations). Empty for metrics only.
+
+Conditions:
+  HasCollection: !Not [!Equals [!Ref CollectionName, ""]]
+
+Resources:
+  HudRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: arn:aws:iam::736129612463:root # Hud's AWS account
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { sts:ExternalId: !Ref ExternalId }
+      Policies:
+        - PolicyName: amp-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [aps:QueryMetrics, aps:GetSeries, aps:GetLabels, aps:GetMetricMetadata]
+                Resource: !Sub arn:${AWS::Partition}:aps:${AWS::Region}:${AWS::AccountId}:workspace/${AmpWorkspaceId}
+        - !If
+          - HasCollection
+          # OpenSearch Serverless needs aoss:APIAccessAll for any data call; HudDataAccessPolicy limits it to reading.
+          # The condition keeps it to this collection even if another one's data access policy grants your account root.
+          - PolicyName: opensearch-read
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: aoss:APIAccessAll
+                  Resource: !Sub arn:${AWS::Partition}:aoss:${AWS::Region}:${AWS::AccountId}:collection/*
+                  Condition:
+                    StringEquals: { aoss:collection: !Ref CollectionName }
+          - !Ref AWS::NoValue
+
+  HudDataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Condition: HasCollection
+    Properties:
+      Name: !Sub ${CollectionName}-hud
+      Type: data
+      Policy: !Sub >-
+        [{"Rules":[
+        {"ResourceType":"index","Resource":["index/${CollectionName}/*"],"Permission":["aoss:DescribeIndex","aoss:ReadDocument"]},
+        {"ResourceType":"collection","Resource":["collection/${CollectionName}"],"Permission":["aoss:DescribeCollectionItems"]}],
+        "Principal":["${HudRole.Arn}"]}]
+
+Outputs:
+  HudRoleArn:
+    Description: Give this to Hud.
+    Value: !GetAtt HudRole.Arn
+  HudExternalId:
+    Description: The ExternalId Hud generated for you, for reference.
+    Value: !Ref ExternalId

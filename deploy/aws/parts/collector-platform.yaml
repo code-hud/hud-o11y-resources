@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Collector platform choice for hud.yaml (source for scripts/unify.py): EKS gets the collector's IAM role
+  (eks-iam.yaml), None leaves the collector to you. ClusterName here replaces eks-iam.yaml's, so it can be empty.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Your collector }
+        Parameters: [CollectorPlatform]
+
+Parameters:
+  CollectorPlatform:
+    Type: String
+    Default: EKS
+    AllowedValues: [EKS, None]
+    Description: EKS = also create the IAM role the Hud collector's Helm chart uses to write to AMP (fill in the EKS fields). None = you run the collector yourself and give it its own credentials; nothing is created for it.
+  ClusterName:
+    Type: String
+    Default: ""
+    Description: EKS only. Your EKS cluster the collector runs in. Leave empty with None.
+
+Rules:
+  EksNeedsCluster:
+    RuleCondition: !Equals [!Ref CollectorPlatform, EKS]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ClusterName, ""]]
+        AssertDescription: ClusterName is required when CollectorPlatform is EKS.
+  NoneHasNoCluster:
+    RuleCondition: !Equals [!Ref CollectorPlatform, None]
+    Assertions:
+      - Assert: !Equals [!Ref ClusterName, ""]
+        AssertDescription: ClusterName is for EKS only. Clear it, or set CollectorPlatform to EKS.
+
+Resources:
+  # Only so this part lints on its own; scripts/unify.py drops it.
+  Placeholder:
+    Type: AWS::CloudFormation::WaitConditionHandle

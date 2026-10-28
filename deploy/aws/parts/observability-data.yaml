@@ -1,0 +1,307 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Data part of the Observability Stack (source for scripts/unify.py): OpenSearch Serverless collection, OpenSearch
+  Ingestion pipeline and Amazon Managed Service for Prometheus, without the OpenSearch UI.
+
+Parameters:
+  Name:
+    Type: String
+    Default: hud-obs
+    AllowedPattern: ^[a-z][a-z0-9-]{2,24}$
+    Description: Names the collection, pipeline, AMP workspace and UI application (3-25 lowercase characters, so the 32-character OpenSearch policy names fit).
+  MinUnits:
+    Type: Number
+    Default: 1
+    Description: Minimum OpenSearch Ingestion capacity (ICUs).
+  MaxUnits:
+    Type: Number
+    Default: 4
+  ServiceMapWindow:
+    Type: String
+    Default: 30s
+  DataWritePrincipals:
+    Type: String
+    Default: ""
+    Description: Optional. Comma-separated IAM role or user ARNs (no spaces) that may also write to the collection (create and update indexes and documents). Everyone in your account can already read it; empty means only the pipeline writes.
+
+Conditions:
+  HasDataWritePrincipals: !Not [!Equals [!Ref DataWritePrincipals, ""]]
+
+Resources:
+  EncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub ${Name}-enc
+      Type: encryption
+      Policy: !Sub '{"Rules":[{"ResourceType":"collection","Resource":["collection/${Name}"]}],"AWSOwnedKey":true}'
+
+  # Public endpoint, as in the official stack; every request still needs IAM credentials and the data access policy.
+  NetworkPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub ${Name}-net
+      Type: network
+      Policy: !Sub '[{"Rules":[{"ResourceType":"collection","Resource":["collection/${Name}"]},{"ResourceType":"dashboard","Resource":["collection/${Name}"]}],"AllowFromPublic":true}]'
+
+  Collection:
+    Type: AWS::OpenSearchServerless::Collection
+    DependsOn: [EncryptionPolicy, NetworkPolicy]
+    Properties:
+      Name: !Ref Name
+      Type: SEARCH
+
+  # Keeps the metrics if the stack is deleted or the workspace replaced, but not after a failed install.
+  Workspace:
+    Type: AWS::APS::Workspace
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      Alias: !Ref Name
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: osis-pipelines.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Not Collection.Arn: OSIS never finishes a pipeline whose role is scoped to a collection created moments
+              # before. DataAccessPolicy still limits the pipeline to this collection.
+              - Effect: Allow
+                Action: [aoss:APIAccessAll, aoss:BatchGetCollection]
+                Resource: !Sub arn:${AWS::Partition}:aoss:${AWS::Region}:${AWS::AccountId}:collection/*
+              - Effect: Allow
+                Action: aps:RemoteWrite
+                Resource: !GetAtt Workspace.Arn
+
+  # The pipeline writes; everyone in the account (with aoss:APIAccessAll in IAM) reads, which covers OpenSearch UI
+  # users and the UI setup. Data access policies have no deny, so the root rule stays read-only: a writable one would
+  # let every role in the account write here, Hud's included.
+  DataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: !Sub ${Name}-access
+      Type: data
+      Policy: !Sub >-
+        [{"Rules":[
+        {"ResourceType":"index","Resource":["index/${Name}/*"],"Permission":["aoss:CreateIndex","aoss:UpdateIndex","aoss:DescribeIndex","aoss:ReadDocument","aoss:WriteDocument"]},
+        {"ResourceType":"collection","Resource":["collection/${Name}"],"Permission":["aoss:CreateCollectionItems","aoss:DeleteCollectionItems","aoss:UpdateCollectionItems","aoss:DescribeCollectionItems"]}],
+        "Principal":["${PipelineRole.Arn}"]},
+        {"Rules":[
+        {"ResourceType":"index","Resource":["index/${Name}/*"],"Permission":["aoss:DescribeIndex","aoss:ReadDocument"]},
+        {"ResourceType":"collection","Resource":["collection/${Name}"],"Permission":["aoss:DescribeCollectionItems"]}],
+        "Principal":["arn:${AWS::Partition}:iam::${AWS::AccountId}:root"]}]
+
+  # Write access as earlier versions gave the whole account (the pipeline's permissions), for the roles you name.
+  WritersAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Condition: HasDataWritePrincipals
+    Properties:
+      Name: !Sub ${Name}-write
+      Type: data
+      Policy: !Sub
+        - >-
+          [{"Rules":[
+          {"ResourceType":"index","Resource":["index/${Name}/*"],"Permission":["aoss:CreateIndex","aoss:UpdateIndex","aoss:DescribeIndex","aoss:ReadDocument","aoss:WriteDocument"]},
+          {"ResourceType":"collection","Resource":["collection/${Name}"],"Permission":["aoss:CreateCollectionItems","aoss:DeleteCollectionItems","aoss:UpdateCollectionItems","aoss:DescribeCollectionItems"]}],
+          "Principal":["${Principals}"]}]
+        - Principals: !Join ['","', !Split [",", !Ref DataWritePrincipals]]
+
+  # The pipeline's own logs, so a pipeline that never becomes active leaves evidence. Kept on rollback and delete
+  # (empty after 14 days), so the name carries the stack id for a recreated stack. OSIS needs the /aws/vendedlogs/
+  # prefix: the account's shared vended-logs resource policy then covers delivery.
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub
+        - /aws/vendedlogs/OpenSearchIngestion/${Name}/${Id}
+        - Id: !Select [2, !Split ["/", !Ref AWS::StackId]]
+      RetentionInDays: 14
+
+  # Rendered from the official installer's serverless pipeline (aws/cli-installer/src/render.mjs, renderPipeline),
+  # except the logs index: in the installer's shared logs-otel-v1, other apps' logs can map attributes.http or
+  # attributes.error as text, and OpenSearch then rejects every Hud investigation (they carry http.* and error.*).
+  Pipeline:
+    Type: AWS::OSIS::Pipeline
+    DependsOn: DataAccessPolicy
+    Properties:
+      PipelineName: !Ref Name
+      MinUnits: !Ref MinUnits
+      MaxUnits: !Ref MaxUnits
+      PipelineRoleArn: !GetAtt PipelineRole.Arn
+      LogPublishingOptions:
+        IsLoggingEnabled: true
+        CloudWatchLogDestination:
+          LogGroup: !Ref PipelineLogGroup
+      PipelineConfigurationBody: !Sub |
+        version: '2'
+        extension:
+          osis_configuration_metadata:
+            builder_type: visual
+
+        # Main OTLP pipeline - receives all telemetry and routes by signal type
+        otlp-pipeline:
+          source:
+            otlp:
+              logs_path: '/${Name}/v1/logs'
+              traces_path: '/${Name}/v1/traces'
+              metrics_path: '/${Name}/v1/metrics'
+          route:
+            - logs: 'getEventType() == "LOG"'
+            - traces: 'getEventType() == "TRACE"'
+            - metrics: 'getEventType() == "METRIC"'
+          processor: []
+          sink:
+            - pipeline:
+                name: otel-logs-pipeline
+                routes:
+                  - logs
+            - pipeline:
+                name: otel-traces-pipeline
+                routes:
+                  - traces
+            - pipeline:
+                name: otel-metrics-pipeline
+                routes:
+                  - metrics
+
+        # Log processing pipeline
+        otel-logs-pipeline:
+          source:
+            pipeline:
+              name: otlp-pipeline
+          processor:
+            - copy_values:
+                entries:
+                  - from_key: "time"
+                    to_key: "@timestamp"
+          sink:
+            - opensearch:
+                hosts:
+                  - '${Collection.CollectionEndpoint}'
+                index: 'hud-investigations-v1'
+                template_type: 'index-template'
+                template_content: '{"version":1,"template":{"mappings":{"date_detection":false,"_source":{"enabled":true},"dynamic_templates":[{"long_resource_attributes":{"mapping":{"type":"long"},"path_match":"resource.attributes.*","match_mapping_type":"long"}},{"double_resource_attributes":{"mapping":{"type":"double"},"path_match":"resource.attributes.*","match_mapping_type":"double"}},{"string_resource_attributes":{"mapping":{"type":"keyword","ignore_above":256},"path_match":"resource.attributes.*","match_mapping_type":"string"}},{"long_scope_attributes":{"mapping":{"type":"long"},"path_match":"instrumentationScope.attributes.*","match_mapping_type":"long"}},{"double_scope_attributes":{"mapping":{"type":"double"},"path_match":"instrumentationScope.attributes.*","match_mapping_type":"double"}},{"string_scope_attributes":{"mapping":{"type":"keyword","ignore_above":256},"path_match":"instrumentationScope.attributes.*","match_mapping_type":"string"}},{"long_attributes":{"mapping":{"type":"long"},"path_match":"attributes.*","match_mapping_type":"long"}},{"double_attributes":{"mapping":{"type":"double"},"path_match":"attributes.*","match_mapping_type":"double"}},{"string_attributes":{"mapping":{"type":"keyword","ignore_above":256},"path_match":"attributes.*","match_mapping_type":"string"}}],"properties":{"droppedAttributesCount":{"type":"integer"},"instrumentationScope":{"properties":{"droppedAttributesCount":{"type":"integer"},"schemaUrl":{"type":"keyword","ignore_above":256},"name":{"type":"keyword","ignore_above":128},"version":{"type":"keyword","ignore_above":64}}},"resource":{"properties":{"droppedAttributesCount":{"type":"integer"},"schemaUrl":{"type":"keyword","ignore_above":256}}},"severity":{"properties":{"number":{"type":"integer"},"text":{"type":"keyword","ignore_above":32}}},"body":{"type":"text"},"@timestamp":{"type":"date_nanos"},"time":{"type":"date_nanos"},"observedTime":{"type":"date_nanos"},"traceId":{"type":"keyword","ignore_above":32},"spanId":{"type":"keyword","ignore_above":16},"flags":{"type":"long"}}}}}'
+                aws:
+                  serverless: true
+                  region: '${AWS::Region}'
+                  sts_role_arn: "${PipelineRole.Arn}"
+
+        # Trace fan-out pipeline
+        otel-traces-pipeline:
+          source:
+            pipeline:
+              name: otlp-pipeline
+          processor: []
+          sink:
+            - pipeline:
+                name: traces-raw-pipeline
+                routes: []
+            - pipeline:
+                name: service-map-pipeline
+                routes: []
+
+        # Raw trace storage pipeline
+        traces-raw-pipeline:
+          source:
+            pipeline:
+              name: otel-traces-pipeline
+          processor:
+            - otel_traces:
+          sink:
+            - opensearch:
+                hosts:
+                  - '${Collection.CollectionEndpoint}'
+                index: 'otel-v1-apm-span'
+                template_type: 'index-template'
+                template_content: '{"version":1,"template":{"mappings":{"date_detection":false,"_source":{"enabled":true},"dynamic_templates":[{"long_resource_attributes":{"mapping":{"type":"long"},"path_match":"resource.attributes.*","match_mapping_type":"long"}},{"double_resource_attributes":{"mapping":{"type":"double"},"path_match":"resource.attributes.*","match_mapping_type":"double"}},{"string_resource_attributes":{"mapping":{"type":"keyword","ignore_above":256},"path_match":"resource.attributes.*","match_mapping_type":"string"}},{"long_scope_attributes":{"mapping":{"type":"long"},"path_match":"instrumentationScope.attributes.*","match_mapping_type":"long"}},{"double_scope_attributes":{"mapping":{"type":"double"},"path_match":"instrumentationScope.attributes.*","match_mapping_type":"double"}},{"string_scope_attributes":{"mapping":{"type":"keyword","ignore_above":256},"path_match":"instrumentationScope.attributes.*","match_mapping_type":"string"}},{"long_attributes":{"mapping":{"type":"long"},"path_match":"attributes.*","match_mapping_type":"long"}},{"double_attributes":{"mapping":{"type":"double"},"path_match":"attributes.*","match_mapping_type":"double"}},{"string_attributes":{"mapping":{"type":"keyword","ignore_above":256},"path_match":"attributes.*","match_mapping_type":"string"}}],"properties":{"droppedAttributesCount":{"type":"integer"},"instrumentationScope":{"properties":{"droppedAttributesCount":{"type":"integer"},"schemaUrl":{"type":"keyword","ignore_above":256},"name":{"type":"keyword","ignore_above":128},"version":{"type":"keyword","ignore_above":64}}},"resource":{"properties":{"droppedAttributesCount":{"type":"integer"},"schemaUrl":{"type":"keyword","ignore_above":256}}},"traceId":{"type":"keyword","ignore_above":32},"spanId":{"type":"keyword","ignore_above":16},"parentSpanId":{"type":"keyword","ignore_above":16},"name":{"ignore_above":1024,"type":"keyword"},"traceState":{"ignore_above":1024,"type":"keyword"},"traceGroup":{"ignore_above":1024,"type":"keyword"},"traceGroupFields":{"properties":{"endTime":{"type":"date_nanos"},"durationInNanos":{"type":"long"},"statusCode":{"type":"integer"}}},"kind":{"type":"keyword","ignore_above":32},"serviceName":{"type":"keyword","ignore_above":256},"startTime":{"type":"date_nanos"},"endTime":{"type":"date_nanos"},"@timestamp":{"type":"date_nanos"},"time":{"type":"date_nanos"},"status":{"properties":{"code":{"type":"integer"},"message":{"type":"keyword","ignore_above":2048}}},"durationInNanos":{"type":"long"},"events":{"type":"nested","properties":{"name":{"type":"keyword","ignore_above":256},"attributes":{"type":"object"},"droppedAttributesCount":{"type":"integer"},"time":{"type":"date_nanos"}}},"droppedEventsCount":{"type":"integer"},"links":{"type":"nested","properties":{"traceId":{"type":"keyword","ignore_above":32},"spanId":{"type":"keyword","ignore_above":16},"traceState":{"ignore_above":1024,"type":"keyword"},"attributes":{"type":"object"},"droppedAttributesCount":{"type":"integer"}}},"droppedLinksCount":{"type":"integer"}}}}}'
+                aws:
+                  serverless: true
+                  region: '${AWS::Region}'
+                  sts_role_arn: "${PipelineRole.Arn}"
+
+        # Service map generation pipeline (APM)
+        service-map-pipeline:
+          source:
+            pipeline:
+              name: otel-traces-pipeline
+          processor:
+            - otel_apm_service_map:
+                db_path: /tmp/otel-apm-service-map
+                group_by_attributes:
+                  - telemetry.sdk.language
+                window_duration: ${ServiceMapWindow}
+          route:
+            - otel_apm_service_map_route: 'getEventType() == "SERVICE_MAP"'
+            - service_processed_metrics: 'getEventType() == "METRIC"'
+          sink:
+            - opensearch:
+                hosts:
+                  - '${Collection.CollectionEndpoint}'
+                aws:
+                  serverless: true
+                  region: '${AWS::Region}'
+                  sts_role_arn: "${PipelineRole.Arn}"
+                routes:
+                  - otel_apm_service_map_route
+                index: 'otel-v2-apm-service-map'
+                template_type: 'index-template'
+                template_content: '{"version":0,"template":{"mappings":{"date_detection":false,"dynamic_templates":[{"long_group_by_attributes":{"path_match":"*.groupByAttributes.*","match_mapping_type":"long","mapping":{"type":"long"}}},{"double_group_by_attributes":{"path_match":"*.groupByAttributes.*","match_mapping_type":"double","mapping":{"type":"double"}}},{"string_group_by_attributes":{"path_match":"*.groupByAttributes.*","match_mapping_type":"string","mapping":{"type":"keyword"}}},{"long_operation_attributes":{"path_match":"*.attributes.*","match_mapping_type":"long","mapping":{"type":"long"}}},{"double_operation_attributes":{"path_match":"*.attributes.*","match_mapping_type":"double","mapping":{"type":"double"}}},{"string_operation_attributes":{"path_match":"*.attributes.*","match_mapping_type":"string","mapping":{"type":"keyword"}}}],"_source":{"enabled":true},"properties":{"sourceNode":{"properties":{"type":{"type":"keyword"},"keyAttributes":{"properties":{"environment":{"type":"keyword"},"name":{"type":"keyword"}}},"groupByAttributes":{"type":"object","dynamic":"true"}}},"targetNode":{"properties":{"type":{"type":"keyword"},"keyAttributes":{"properties":{"environment":{"type":"keyword"},"name":{"type":"keyword"}}},"groupByAttributes":{"type":"object","dynamic":"true"}}},"sourceOperation":{"properties":{"name":{"type":"keyword"},"attributes":{"type":"object","dynamic":"true"}}},"targetOperation":{"properties":{"name":{"type":"keyword"},"attributes":{"type":"object","dynamic":"true"}}},"nodeConnectionHash":{"type":"keyword"},"operationConnectionHash":{"type":"keyword"},"timestamp":{"type":"date","format":"strict_date_optional_time||epoch_millis"}}}}}'
+            - prometheus:
+                url: 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${Workspace.WorkspaceId}/api/v1/remote_write'
+                aws:
+                  region: '${AWS::Region}'
+                routes:
+                  - service_processed_metrics
+
+        # Metrics processing pipeline
+        otel-metrics-pipeline:
+          source:
+            pipeline:
+              name: otlp-pipeline
+          processor:
+            - otel_metrics:
+          sink:
+            - prometheus:
+                url: 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${Workspace.WorkspaceId}/api/v1/remote_write'
+                aws:
+                  region: '${AWS::Region}'
+
+Outputs:
+  AmpWorkspaceId:
+    Description: Pass to the collector stack as AmpWorkspaceId.
+    Value: !GetAtt Workspace.WorkspaceId
+  OsisLogsUrl:
+    Description: Pass to the collector stack as OsisLogsUrl.
+    Value: !Sub
+      - https://${Host}/${Name}/v1/logs
+      - Host: !Select [0, !GetAtt Pipeline.IngestEndpointUrls]
+  OsisPipelineName:
+    Description: Pass to the collector stack as OsisPipelineName.
+    Value: !Ref Name
+  CollectionName:
+    Description: Give this to Hud, with CollectionEndpoint. Pass to the access stack (hud-access.yaml) as CollectionName.
+    Value: !Ref Name
+  CollectionEndpoint:
+    Description: Give this to Hud, with CollectionName.
+    Value: !GetAtt Collection.CollectionEndpoint
+  OtlpEndpoint:
+    Description: Base OTLP endpoint for other OTel collectors (append /v1/logs, /v1/traces or /v1/metrics; SigV4, service osis).
+    Value: !Sub
+      - https://${Host}/${Name}
+      - Host: !Select [0, !GetAtt Pipeline.IngestEndpointUrls]
+  CollectionArn:
+    Description: Pass to the UI and attach stacks as CollectionArn.
+    Value: !GetAtt Collection.Arn
+  AmpWorkspaceArn:
+    Description: Pass to the UI and attach stacks as AmpWorkspaceArn.
+    Value: !GetAtt Workspace.Arn

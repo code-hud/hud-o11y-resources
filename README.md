@@ -8,6 +8,8 @@ Ready-made OpenSearch dashboards and Prometheus alert rules for data produced by
 | `scripts/dashboard-loader.py` | Adapts the dashboards to your environment (workspace, data sources, index pattern, OpenSearch Dashboards version) and checks the result before you import it. |
 | `rules/hud-flow-errors.rules.yaml` | Prometheus rule groups (Hud flow error alerts) for the Hud SDK metrics. |
 | `rules/hud-flow-*.rules.yaml`, `rules/hud-function-*.rules.yaml` | Prometheus rule groups for latency degradation (`week-over-week`, `day-over-week`, `latency-spike`, and an optional function-level `day-over-week`) and the alpha `error-rate-spike`. One file per namespace, named after the entity it alerts on. |
+| `deploy/` | CloudFormation templates (`deploy/aws/`) and Helm values (`deploy/helm/`) that deploy the [Hud OpenTelemetry collector](https://github.com/code-hud/hud-otel-collector) and the Observability Stack to your AWS account. See [deploy/README.md](deploy/README.md). |
+| `scripts/unify.py`, `scripts/quick-create-link.sh` | Generate the one-stack templates from `deploy/aws/parts/` and the separate templates, and print "Launch in CloudFormation" links. |
 
 Releases are tagged the same way as the Hud SDK releases. Use the tag that matches the SDK version you run.
 
@@ -158,6 +160,10 @@ Differences from Hud's own detection:
 ## Development
 
 `python3 -m unittest discover -s tests` runs the script's tests against the dashboards in `dashboards/`.
+
+`observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `scripts/unify.py --check` and cfn-lint 1.58.0 on every template. The published templates are at `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.
+
+The `collector-bump` workflow opens a PR that points the templates and Helm values at a new `ghcr.io/code-hud/hud-otel-collector` tag. hud-otel-collector's release workflow triggers it; you can also run it by hand with the tag.
 
 ## License
 
