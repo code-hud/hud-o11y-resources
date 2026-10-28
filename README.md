@@ -5,7 +5,7 @@ Ready-made OpenSearch dashboards and Prometheus alert rules for data produced by
 | Path | Contents |
 | --- | --- |
 | `dashboards/` | The Hud dashboards ("Hud: ..."), together with their panels, queries and index pattern, as NDJSON saved-object exports from OpenSearch UI or OpenSearch Dashboards (with related objects included). |
-| `scripts/adapt.py` | Adapts the dashboards to your environment (workspace, data sources, index pattern, OpenSearch Dashboards version) and checks the result before you import it. |
+| `scripts/dashboard-loader.py` | Adapts the dashboards to your environment (workspace, data sources, index pattern, OpenSearch Dashboards version) and checks the result before you import it. |
 | `rules/hud-flow-errors.rules.yaml` | Prometheus rule groups (Hud flow error alerts) for the Hud SDK metrics. |
 | `rules/hud-flow-*.rules.yaml`, `rules/hud-function-*.rules.yaml` | Prometheus rule groups for latency degradation (`week-over-week`, `day-over-week`, `latency-spike`, and an optional function-level `day-over-week`) and the alpha `error-rate-spike`. One file per namespace, named after the entity it alerts on. |
 
@@ -21,7 +21,7 @@ cd o11y-templates
 
 ## Prerequisites
 
-- Python 3.9 or later, to run `scripts/adapt.py`. It uses only the standard library.
+- Python 3.9 or later, to run `scripts/dashboard-loader.py`. It uses only the standard library.
 - One of:
   - an **OpenSearch UI** application with a workspace for the Hud data, and permission to import saved objects into it;
   - a self-managed **OpenSearch Dashboards** 3.9 or later.
@@ -41,12 +41,12 @@ cd o11y-templates
 
 ### 2. Adapt the dashboards
 
-`scripts/adapt.py` reads every `*.ndjson` file under `dashboards/`, fills in your environment, checks the result, and writes all the objects to a single file, `out/hud.ndjson`. The files under `dashboards/` are not modified.
+`scripts/dashboard-loader.py` reads every `*.ndjson` file under `dashboards/`, fills in your environment, checks the result, and writes all the objects to a single file, `out/hud.ndjson`. The files under `dashboards/` are not modified.
 
 **OpenSearch UI:**
 
 ```bash
-python3 scripts/adapt.py --target opensearch-ui \
+python3 scripts/dashboard-loader.py --target opensearch-ui \
   --workspace-id <workspace id> \
   --opensearch-data-source-id <data source id> \
   --prometheus-connection <connection name>
@@ -55,7 +55,7 @@ python3 scripts/adapt.py --target opensearch-ui \
 **Self-managed OpenSearch Dashboards:**
 
 ```bash
-python3 scripts/adapt.py --target osd \
+python3 scripts/dashboard-loader.py --target osd \
   --osd-url https://<your dashboards host> --osd-user <user> \
   --prometheus-connection <connection name>
 ```
@@ -91,7 +91,7 @@ curl -u <user> -X POST "https://<your dashboards host>/api/saved_objects/_import
   -H 'osd-xsrf: true' --form file=@out/hud.ndjson
 ```
 
-To upgrade, check out the newer release tag, run `scripts/adapt.py` again with the same options, and import the result the same way.
+To upgrade, check out the newer release tag, run `scripts/dashboard-loader.py` again with the same options, and import the result the same way.
 
 ## Install the alert rules
 
@@ -155,4 +155,4 @@ Differences from Hud's own detection:
 
 ## Development
 
-`python3 -m unittest discover -s tests` runs the script's tests. They use the files in `tests/fixtures/` (an OpenSearch UI export and the catalog's Hud bundles), not `dashboards/`, so replacing the dashboards does not break them.
+`python3 -m unittest discover -s tests` runs the script's tests against the dashboards in `dashboards/`.
