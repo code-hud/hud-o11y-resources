@@ -1,0 +1,28 @@
+# NOT DEPLOYED. Optional function-level day-over-week degradation (disabled by default in Hud).
+# Matches Hud's function degradation detection: window p90 [now-1d, now] vs [now-8d, now-1d] >= 1.7x,
+# p90 >= 150ms, >= 100 calls in both windows. Window p90 only (no hourly stats / confidence interval), like Hud.
+# Hud only evaluates functions the user selected, which AMP cannot know: set the code_function_name regex below to the watched function
+# names. The placeholder matches nothing, so the rule is inert until edited. Expensive: it queries per-function series over 8 days.
+# Invocations use code_function_calls_total (exact calls); the function histogram count is sampled.
+groups:
+  - name: hud-function-day-over-week-degradation
+    interval: 1h
+    rules:
+      - alert: HudFunctionDayOverWeekDegradation
+        expr: |
+          (
+            histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d])))
+            / on (service_name, deployment_environment_name, code_function_name, code_file_path)
+            histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[7d] offset 1d)))
+          ) >= 1.7
+          and on (service_name, deployment_environment_name, code_function_name, code_file_path) (histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d]))) >= 0.15)
+          and on (service_name, deployment_environment_name, code_function_name, code_file_path) (sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_calls_total{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d])) >= 100)
+          and on (service_name, deployment_environment_name, code_function_name, code_file_path) (sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_calls_total{code_function_name=~"__NO_FUNCTION_SELECTED__"}[7d] offset 1d)) >= 100)
+        for: 0m
+        labels:
+          severity: warning
+          endpoint_method: ""
+          endpoint_path: "{{ $labels.code_function_name }}"
+        annotations:
+          summary: "Hud-style function p90 degradation on {{ $labels.service_name }} {{ $labels.code_function_name }}"
+          description: "Function p90 over the last 24h is {{ $value | humanize }}x the preceding 7 days (alert at >= 1.7x, >= 100 calls in both windows, p90 >= 150ms)."

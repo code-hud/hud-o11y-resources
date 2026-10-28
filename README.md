@@ -5,7 +5,8 @@ Ready-made OpenSearch dashboards and Prometheus alert rules for data produced by
 | Path | Contents |
 | --- | --- |
 | `dashboards/hud.ndjson` | The Hud dashboards ("Hud: ..."), together with their panels, queries and index pattern. Exported from OpenSearch UI with related objects included. |
-| `rules/hud-alerts.yml` | Prometheus rule groups (Hud flow error alerts) for the Hud SDK metrics. |
+| `rules/hud-flow-errors.rules.yaml` | Prometheus rule groups (Hud flow error alerts) for the Hud SDK metrics. |
+| `rules/hud-flow-*.rules.yaml`, `rules/hud-function-*.rules.yaml` | Prometheus rule groups for latency degradation (`week-over-week`, `day-over-week`, `latency-spike`, and an optional function-level `day-over-week`) and the alpha `error-rate-spike`. One file per namespace, named after the entity it alerts on. |
 
 Releases are tagged the same way as the Hud SDK releases. Use the tag that matches the SDK version you run.
 
@@ -14,7 +15,7 @@ Releases are tagged the same way as the Hud SDK releases. Use the tag that match
 ```bash
 VERSION=<release tag>   # e.g. the SDK version you run
 curl -LO https://raw.githubusercontent.com/code-hud/o11y-templates/${VERSION}/dashboards/hud.ndjson
-curl -LO https://raw.githubusercontent.com/code-hud/o11y-templates/${VERSION}/rules/hud-alerts.yml
+curl -LO https://raw.githubusercontent.com/code-hud/o11y-templates/${VERSION}/rules/hud-flow-errors.rules.yaml
 ```
 
 ## Prerequisites
@@ -59,14 +60,14 @@ To upgrade, download `hud.ndjson` from the newer release tag, fill in the IDs ag
 
 ## Install the alert rules
 
-`rules/hud-alerts.yml` is a standard Prometheus rule file (top-level `groups:`), evaluated against the Hud SDK metrics in AMP.
+`rules/hud-flow-errors.rules.yaml` is a standard Prometheus rule file (top-level `groups:`), evaluated against the Hud SDK metrics in AMP.
 
 ### Via the AWS console
 
 1. Open the [Amazon Managed Service for Prometheus console](https://console.aws.amazon.com/prometheus/) in the region of your workspace.
 2. Select the workspace that receives the Hud SDK metrics.
 3. Open the **Rules management** tab and click **Add namespace**.
-4. Name the namespace (for example `hud`), upload `hud-alerts.yml`, and click **Create**.
+4. Name the namespace (for example `hud`), upload `hud-flow-errors.rules.yaml`, and click **Create**.
 5. To route the alerts (Slack, PagerDuty, SNS, ...), configure **Alert manager** in the same workspace.
 
 ### Via the AWS CLI
@@ -75,13 +76,13 @@ To upgrade, download `hud.ndjson` from the newer release tag, fill in the IDs ag
 aws amp create-rule-groups-namespace \
   --workspace-id <workspace-id> \
   --name hud \
-  --data fileb://hud-alerts.yml
+  --data fileb://hud-flow-errors.rules.yaml
 
 # Upgrading an existing namespace:
 aws amp put-rule-groups-namespace \
   --workspace-id <workspace-id> \
   --name hud \
-  --data fileb://hud-alerts.yml
+  --data fileb://hud-flow-errors.rules.yaml
 ```
 
 ## What the alerts do
@@ -92,3 +93,27 @@ aws amp put-rule-groups-namespace \
 - an error rate of at least 1% of the flow's invocations (or of its messages, for SQS flows).
 
 HTTP 4xx responses are excluded. Each alert carries `service_name`, `deployment_environment_name`, `endpoint_method` and `endpoint_path` labels so it can be routed and grouped.
+
+### Degradation alerts
+
+The files below alert on p90 latency degradation (and, for `hud-flow-error-rate-spike`, error-rate spikes) of Hud flows, using the `code_flow_duration_seconds` native histogram. Each file is its own AMP namespace (uploading a namespace replaces everything in it), so upload each under a different name:
+
+| File | Alert | Interval | History needed |
+| --- | --- | --- | --- |
+| `hud-flow-week-over-week.rules.yaml` | `HudWeekOverWeekDegradation` | 1h | about 14 days |
+| `hud-flow-day-over-week.rules.yaml` | `HudDayOverWeekDegradation` | 1h | about 8 days |
+| `hud-flow-latency-spike.rules.yaml` | `HudLatencySpike` | 10m | about 1 day |
+| `hud-function-day-over-week.rules.yaml` | `HudFunctionDayOverWeekDegradation` | 1h | about 8 days |
+| `hud-flow-error-rate-spike.rules.yaml` | `HudErrorRateSpike` (critical, alpha) | 1h | about 8 days |
+
+```bash
+aws amp create-rule-groups-namespace --workspace-id <workspace-id> --name hud-wow --data fileb://hud-flow-week-over-week.rules.yaml
+# update: aws amp put-rule-groups-namespace ... (same arguments)
+```
+
+Differences from Hud's own detection:
+
+- No per-entity overrides, exclusion lists or session tags, and no issue lifecycle: AMP alerts are stateless firing/resolved, so Hud's cooldowns and dedup do not apply.
+- The p90 is a native-histogram quantile, not Hud's DDSketch; the in-progress hour is not part of the current window; Hud's requirement of a degraded source function is not reproduced, so these alert more often than Hud.
+- There is no flow-type selector, so custom and queue flows are included although Hud only runs degradation on endpoint and Kafka entities.
+- `hud-function-day-over-week.rules.yaml` is inert until the `code_function_name` regex (`__NO_FUNCTION_SELECTED__`) is set to the functions you watch. It is expensive: it queries per-function series over 8 days.
