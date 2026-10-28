@@ -1,7 +1,7 @@
 name: collector-bump
 
 # Sent by hud-otel-collector's release workflow (repository_dispatch, event_type collector-release,
-# client_payload.version = image tag without the "v"), or run by hand.
+# client_payload.version = release version, a leading "v" is dropped), or run by hand.
 # PRs opened with GITHUB_TOKEN don't trigger the cfn-lint workflow, so the checks run here first.
 on:
   repository_dispatch:
@@ -22,7 +22,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ github.event.client_payload.version || inputs.tag }}
+      VERSION: ${{ github.event.client_payload.version || inputs.tag }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -31,7 +31,9 @@ jobs:
       - run: pip install cfn-lint==1.58.0
       - name: Bump the image tag
         run: |
+          TAG=${VERSION#v}
           [[ $TAG =~ ^[0-9]+\.[0-9]+\.[0-9]+(-hud\.[0-9]+)?$ ]] || { echo "invalid tag: $TAG"; exit 1; }
+          echo "TAG=$TAG" >>"$GITHUB_ENV"
           docker manifest inspect "ghcr.io/code-hud/hud-otel-collector:$TAG" >/dev/null
           sed -i -E "s#(ghcr\.io/code-hud/hud-otel-collector:)[0-9][^ \"]*#\1$TAG#" deploy/aws/ecs-fargate.yaml
           sed -i -E "s#^(  tag: \")[^\"]*#\1$TAG#" deploy/helm/values.yaml
