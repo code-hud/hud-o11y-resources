@@ -1,0 +1,6 @@
+# One series per app pod: function metrics keep each pod's id too, no re-stamping. Your apps may send deltas or running totals.
+alternateConfig:
+  service:
+    pipelines:
+      metrics/functions:
+        processors: [memory_limiter, filter/functions, batch, delta_to_cumulative]

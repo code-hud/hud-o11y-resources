@@ -1,0 +1,103 @@
+# Values for the official chart: https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-collector
+# Required: --set-string extraEnvs[0].value=<AMP remote write URL>,extraEnvs[1].value=<region>
+# Merge mode by default (your apps must send deltas). For one series per pod add -f values-convert.yaml.
+mode: deployment
+fullnameOverride: hud-collector
+replicaCount: 1
+
+image:
+  repository: ghcr.io/code-hud/hud-otel-collector
+  tag: "0.163.2-hud.3"
+command:
+  name: hud-otelcol
+
+serviceAccount:
+  create: true
+  name: hud-collector
+  # IRSA only:
+  # annotations:
+  #   eks.amazonaws.com/role-arn: <RoleArn output of eks-iam.yaml>
+
+resources:
+  requests: { cpu: 500m, memory: 4Gi }
+  limits: { memory: 4Gi }
+
+extraEnvs:
+  - name: AMP_REMOTE_WRITE_URL
+    value: ""
+  - name: AWS_REGION
+    value: ""
+
+ports:
+  otlp: { enabled: false }
+  jaeger-compact: { enabled: false }
+  jaeger-thrift: { enabled: false }
+  jaeger-grpc: { enabled: false }
+  zipkin: { enabled: false }
+
+# Not merged with the chart's default config, which uses components this distribution doesn't include.
+alternateConfig:
+  extensions:
+    health_check:
+      endpoint: ${env:MY_POD_IP}:13133
+    sigv4auth:
+      region: ${env:AWS_REGION}
+      service: aps
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: 80
+      spike_limit_percentage: 20
+    # Function metrics (code.function.*) merge across app pods; everything else (flow, process) stays per pod.
+    filter/functions:
+      metrics:
+        metric: ['not IsMatch(name, "^code\\.function\\.")']
+    filter/per_pod:
+      metrics:
+        metric: ['IsMatch(name, "^code\\.function\\.")']
+    # Serializes concurrent requests; without it, re-stamped points can reach delta_to_cumulative out of order and be dropped.
+    batch: {}
+    # Drops per-pod resource attributes and moves the kept ones onto the data points, so they become labels and a
+    # stream's identity is its label set. Each collector pod writes only its own series.
+    transform/merge:
+      metric_statements:
+        - context: resource
+          statements:
+            - keep_keys(attributes, ["service.name", "service.namespace", "deployment.environment.name", "deployment.id", "k8s.namespace.name", "cloud.provider", "cloud.region", "telemetry.sdk.version", "hud.identity.version"])
+        - context: datapoint
+          statements:
+            - merge_maps(attributes, resource.attributes, "insert")
+            - delete_matching_keys(attributes, "^service\\.(name|namespace)$")
+        - context: resource
+          statements:
+            - keep_keys(attributes, ["service.name", "service.namespace"])
+            - set(attributes["service.instance.id"], "${env:HOSTNAME}")
+    transform/restamp:
+      metric_statements:
+        - context: datapoint
+          statements: ["set(start_time, Now())", "set(time, Now())"]
+    delta_to_cumulative:
+      max_stale: 1h
+    interval:
+      interval: 60s
+  exporters:
+    prometheus_remote_write:
+      endpoint: ${env:AMP_REMOTE_WRITE_URL}
+      auth:
+        authenticator: sigv4auth
+  service:
+    extensions: [health_check, sigv4auth]
+    pipelines:
+      metrics/functions:
+        receivers: [otlp]
+        processors: [memory_limiter, filter/functions, batch, transform/merge, transform/restamp, delta_to_cumulative, interval]
+        exporters: [prometheus_remote_write]
+      metrics/per_pod:
+        receivers: [otlp]
+        processors: [memory_limiter, filter/per_pod, batch, delta_to_cumulative]
+        exporters: [prometheus_remote_write]

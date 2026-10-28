@@ -1,0 +1,20 @@
+name: cfn-lint
+
+on:
+  pull_request:
+    paths: ["deploy/**", "scripts/unify.py", ".github/workflows/cfn-lint.yaml"]
+  push:
+    branches: [main]
+    paths: ["deploy/**", "scripts/unify.py", ".github/workflows/cfn-lint.yaml"]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install cfn-lint==1.58.0
+      - run: python3 scripts/unify.py --check
+      - run: cfn-lint deploy/aws/*.yaml deploy/aws/parts/*.yaml
