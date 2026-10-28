@@ -41,6 +41,7 @@ jobs:
           done
       - run: python3 scripts/unify.py --check
       - run: cfn-lint deploy/aws/*.yaml deploy/aws/parts/*.yaml
+      - run: python3 scripts/collector-configs.py --validate
       - uses: peter-evans/create-pull-request@v8
         with:
           branch: bump-collector/${{ env.TAG }}
@@ -49,7 +50,7 @@ jobs:
           commit-message: Bump hud-otel-collector to ${{ env.TAG }}
           body: |
             Points the templates and Helm values at `ghcr.io/code-hud/hud-otel-collector:${{ env.TAG }}`.
-            `unify.py --check` and cfn-lint passed in the bump run.
+            `unify.py --check`, cfn-lint and `collector-configs.py --validate` (every rendered config, in the new image) passed in the bump run.
 
             After merging, upload `deploy/aws/ecs-fargate.yaml` and `deploy/aws/hud-ecs.yaml` to
             `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.

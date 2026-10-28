@@ -161,7 +161,7 @@ Differences from Hud's own detection:
 
 `python3 -m unittest discover -s tests` runs the script's tests against the dashboards in `dashboards/`.
 
-`observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `scripts/unify.py --check` and cfn-lint 1.58.0 on every template. The published templates are at `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.
+`observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `scripts/unify.py --check` and cfn-lint 1.58.0 on every template, and `scripts/collector-configs.py --validate`: it renders the collector config of `ecs-fargate.yaml` (merge and convert, with and without logs) and of the Helm values (merge and convert), checks their pipelines, and runs `validate` on each in the collector image they pin (needs Docker; without `--validate` it only renders and checks). The published templates are at `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.
 
 The `collector-bump` workflow opens a PR that points the templates and Helm values at a new `ghcr.io/code-hud/hud-otel-collector` tag. hud-otel-collector's release workflow triggers it; you can also run it by hand with the tag.
 
