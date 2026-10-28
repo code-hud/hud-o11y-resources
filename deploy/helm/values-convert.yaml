@@ -3,4 +3,4 @@ alternateConfig:
   service:
     pipelines:
       metrics/functions:
-        processors: [memory_limiter, filter/functions, batch, delta_to_cumulative]
+        processors: [memory_limiter, filter/functions, batch, transform/environment, delta_to_cumulative]
