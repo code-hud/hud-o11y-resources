@@ -184,6 +184,13 @@ class DashboardLoaderTest(unittest.TestCase):
                                    "value": "$" + k}, matchers, f"{target}: {d}")
         for ln in links((out / "hud.ndjson").read_text()):
             self.assertNotIn("'$__all'", ln)
+        for dash in (o for o in result.values() if o["type"] == "dashboard"):
+            names = [v["name"] for v in variables(dash)]
+            for i, v in enumerate(variables(dash)):
+                self.assertNotIn("$__all", json.dumps(v.get("current")), f"{dash['id']}: {v['name']}")
+                for m in (v.get("promQLResourceQuery") or {}).get("matchers", []):
+                    refs = set(re.findall(r"\$\{?(\w+)", m["value"])) & set(names)
+                    self.assertTrue(refs <= set(names[:i]), f"{dash['id']}: {v['name']} filters on {m['value']}")
 
     def test_opensearch_ui_requires_prometheus_arn(self):
         if not self.arns:

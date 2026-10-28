@@ -432,25 +432,57 @@ def version_neutral_links(objs, report):
                         f"{gone} to; links land on their defaults")
             continue
         metric = anchors[-1]["promQLResourceQuery"]["metric"]
+        for v in chain:
+            if (v.get("promQLResourceQuery") or {}).get("kind") != "labelValues":
+                report.warn(f"dashboard {target}: variable {v.get('name')} is not a label-values lookup; left as is")
+        chain = [v for v in chain if (v.get("promQLResourceQuery") or {}).get("kind") == "labelValues"]
+        chain_names = {v.get("name") for v in chain}
+        # The dropped variables move right after the last linked one; the others keep their order.
+        last_anchor = max(variables.index(a) for a in anchors)
+        moved = [v for v in variables[:last_anchor + 1] if v not in chain] + chain + \
+                [v for v in variables[last_anchor + 1:] if v not in chain]
+        for a in anchors:
+            q = a["promQLResourceQuery"]
+            q["matchers"] = [m for m in q.get("matchers", []) if not variable_refs(m.get("value")) & chain_names]
+        anchor_labels = {a["promQLResourceQuery"]["label"] for a in anchors}
         done = []
         for v in chain:
-            q = v.get("promQLResourceQuery")
-            if not q or q.get("kind") != "labelValues":
-                report.warn(f"dashboard {target}: variable {v.get('name')} is not a label-values lookup; left as is")
-                continue
-            matchers = [m for m in q.get("matchers", []) if m.get("label") not in
-                        {a["promQLResourceQuery"]["label"] for a in anchors + done}]
+            q = v["promQLResourceQuery"]
+            before = {u.get("name") for u in moved[:moved.index(v)]}
+            matchers = [m for m in q.get("matchers", []) if m.get("label") not in anchor_labels
+                        and variable_refs(m.get("value")) <= before - chain_names]
             matchers += [{"label": a["promQLResourceQuery"]["label"], "operator": "=", "value": "$" + a["name"]}
                          for a in anchors]
             matchers += [{"label": d["promQLResourceQuery"]["label"], "operator": "=~", "value": "$" + d["name"]}
                          for d in done]
             q["metric"], q["matchers"] = metric, matchers
             done.append(v)
-        moved = keep + [v for v in variables if v not in keep]
         if [v.get("name") for v in moved] != [v.get("name") for v in variables]:
             doc["variables"] = moved
+        for i, v in enumerate(moved):
+            q = v.get("promQLResourceQuery") or {}
+            later = {u.get("name") for u in moved[i:]}
+            for m in q.get("matchers", []):
+                if variable_refs(m.get("value")) & later:
+                    report.error(f"dashboard {target}: variable {v.get('name')} filters on "
+                                 f"{m.get('value')}, which comes after it once the links are rewritten")
         report.note(f"dashboard {target}: variables {[v.get('name') for v in moved]}; "
                     f"{[v.get('name') for v in done]} chained to {[a['name'] for a in anchors]} on {metric}")
+
+    # A saved '$__all' selection is a literal value below 3.10; without it the variable takes its default.
+    for dash in dashboards.values():
+        doc = unwrap(dash["attributes"].get("variablesJSON"))
+        if not isinstance(doc, dict):
+            continue
+        for v in doc.get("variables", []):
+            if "$__all" in json.dumps(v.get("current")):
+                del v["current"]
+                report.note(f"dashboard {dash['id']}: dropped the saved '$__all' selection of {v.get('name')}; "
+                            f"it opens on its first value (All stays in the dropdown)")
+
+
+def variable_refs(value):
+    return set(re.findall(r"\$\{?(\w+)", value or "")) - {"__all", "__range", "__interval", "__value"}
 
 
 # ---------------------------------------------------------------------------- checks
@@ -504,6 +536,10 @@ def check(objs, where, args, report, old_values):
                 report.error(f"{w}: a dashboard link still carries /w/{ws.group(1)}")
         if args.links == "version-neutral" and ALL_VALUE in text and "/app/dashboards#" in text:
             report.error(f"{w}: a dashboard link still uses '$__all', which this OSD version does not understand")
+        if args.links == "version-neutral" and o.get("type") == "dashboard":
+            for v in (unwrap(o["attributes"].get("variablesJSON")) or {}).get("variables", []):
+                if "$__all" in json.dumps(v.get("current")):
+                    report.error(f"{w}: variable {v.get('name')} still has a saved '$__all' selection")
         for label, values in old_values.items():
             for v in values:
                 if re.search(r"(?<![\w-])" + re.escape(v) + r"(?![\w-])", text):
