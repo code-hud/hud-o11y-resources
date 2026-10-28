@@ -13,8 +13,12 @@ Two modes:
   from them; the kept ones become labels: `deployment_environment_name`, `deployment_id`, `k8s_namespace_name`,
   `cloud_provider`, `cloud_region`, `telemetry_sdk_version` and `hud_identity_version` (each only when your apps
   set it). During a rollout the old and new deployments are separate series, so for totals use
-  `sum without (deployment_id, telemetry_sdk_version) (...)`. Flow and process metrics stay one series per app pod.
-- `convert`: one series per app pod for every metric.
+  `sum without (deployment_id, telemetry_sdk_version) (...)`. Flow and process metrics stay one series per app pod
+  and also carry `deployment_environment_name`.
+- `convert`: one series per app pod for every metric, each labeled `deployment_environment_name`.
+
+In both modes every metric gets `deployment_environment_name` when your apps set the `deployment.environment.name`
+resource attribute; `target_info`, `job` and `instance` are unchanged.
 
 Both take the deltas the Hud SDK sends; point your apps at the collector with `HUD_EXPORTER=otlp` and `HUD_OTLP_ENDPOINT`.
 
