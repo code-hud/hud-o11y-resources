@@ -157,7 +157,15 @@ Resources:
                       ui(base, "POST", "/api/workspaces/_associate", {"workspaceId": ws, "savedObjects": [{"type": kind, "id": objs[0]["id"]}]})
 
               logs_schema = '{"otelLogs":{"timestamp":"time","traceId":"traceId","spanId":"spanId","serviceName":"resource.attributes.service.name"}}'
-              pat = {"title": "hud-investigations-v1*", "timeFieldName": "time", "signalType": "logs", "schemaMappings": logs_schema}
+              # The index only exists once the first investigation arrives, and the UI doesn't fetch fields for a saved
+              # pattern, so without a time field here Discover's histogram fails ("Could not locate that index-pattern-field").
+              # Refresh the field list in the UI to pick up the rest.
+              fields = [{"name": n, "type": t, "esTypes": [e], "searchable": s, "aggregatable": s, "readFromDocValues": s,
+                         "count": 0, "scripted": False} for n, t, e, s in (("_id", "string", "_id", True),
+                         ("_index", "string", "_index", True), ("_score", "number", "_score", False),
+                         ("_source", "_source", "_source", False), ("time", "date", "date", True), ("@timestamp", "date", "date", True))]
+              pat = {"title": "hud-investigations-v1*", "timeFieldName": "time", "signalType": "logs", "schemaMappings": logs_schema,
+                     "fields": json.dumps(fields)}
               _, f = ui(base, "GET", "/w/%s/api/saved_objects/_find?type=index-pattern&search_fields=title&search=%s" % (ws, urllib.parse.quote(pat["title"])))
               logs = next((o["id"] for o in (f or {}).get("saved_objects", []) if o["attributes"].get("title") == pat["title"]), None) if isinstance(f, dict) else None
               if not logs:
