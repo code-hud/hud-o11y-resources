@@ -77,6 +77,12 @@ alternateConfig:
           statements:
             - keep_keys(attributes, ["service.name", "service.namespace"])
             - set(attributes["service.instance.id"], "${env:HOSTNAME}")
+    # Copies the environment onto the data points so it becomes a label; the resource (target_info, job, instance) is unchanged.
+    transform/environment:
+      metric_statements:
+        - context: datapoint
+          statements:
+            - set(attributes["deployment.environment.name"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil
     transform/restamp:
       metric_statements:
         - context: datapoint
@@ -99,5 +105,5 @@ alternateConfig:
         exporters: [prometheus_remote_write]
       metrics/per_pod:
         receivers: [otlp]
-        processors: [memory_limiter, filter/per_pod, batch, delta_to_cumulative]
+        processors: [memory_limiter, filter/per_pod, batch, transform/environment, delta_to_cumulative]
         exporters: [prometheus_remote_write]
