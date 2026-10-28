@@ -1,5 +1,16 @@
 # Deploying to your AWS account
 
+CloudFormation templates and Helm values for the [Hud OpenTelemetry collector](https://github.com/code-hud/hud-otel-collector) and the Observability Stack.
+
+| Path | Contents |
+| --- | --- |
+| `deploy/aws/` | CloudFormation templates. `parts/` holds the sources; `observability.yaml`, `hud-ecs.yaml`, and `hud.yaml` are generated from them. |
+| `deploy/helm/` | Helm values for the collector chart: `values.yaml`, and `values-convert.yaml` for convert mode. |
+| `deploy/scripts/unify.py` | Generates the one-stack templates from `deploy/aws/parts/` and the separate templates. |
+| `deploy/scripts/collector-configs.py` | Renders every collector config the templates and Helm values can produce, and checks it. |
+| `deploy/scripts/quick-create-link.sh` | Prints a new ExternalId and "Launch in CloudFormation" links with it prefilled. |
+| [`deploy/alternatives.md`](alternatives.md) | Deploys that use an Observability Stack or AMP workspace you already have. |
+
 Commands below run from the repository root.
 
 The collector runs in your AWS account and writes to your Amazon Managed Service for Prometheus (AMP).
@@ -46,7 +57,7 @@ stack (~10 minutes):
   [Already running the Observability Stack?](#already-running-the-observability-stack));
 - a read-only role Hud can assume to query that data (see [Hud access](#hud-access)).
 
-For testing, `scripts/quick-create-link.sh` prints a new ExternalId and the links of both templates with it
+For testing, `deploy/scripts/quick-create-link.sh` prints a new ExternalId and the links of both templates with it
 prefilled (the bare links below leave it empty). The AMP workspace is kept if the stack is deleted, but not when
 the install itself fails. The OSIS pipeline logs to `/aws/vendedlogs/OpenSearchIngestion/<name>/<stack id>` (14
 days), which is also kept, so a pipeline that never becomes active leaves evidence. Turning those logs on needs
@@ -120,7 +131,7 @@ new app (details in [alternatives](alternatives.md#next-to-your-observability-st
 AMP workspace you already have, see [Deploying with existing resources](alternatives.md).
 
 `observability.yaml`, `hud-ecs.yaml` and `hud.yaml` are generated from the templates in `deploy/aws/parts/`,
-`ecs-fargate.yaml`, `eks-iam.yaml` and `hud-access.yaml`: edit those, then run `scripts/unify.py`.
+`ecs-fargate.yaml`, `eks-iam.yaml` and `hud-access.yaml`: edit those, then run `deploy/scripts/unify.py`.
 
 ## EKS role on its own
 
@@ -172,3 +183,9 @@ The collection's data access policies allow:
 Deployed an earlier version? Its policy gave your account root read and write. Updating the stack makes everyone
 in your account read-only; what the OpenSearch UI shows doesn't change. If something of yours writes to the
 collection, pass its role in `DataWritePrincipals` in the same update.
+
+## Development
+
+`observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `deploy/scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `deploy/scripts/unify.py --check` and cfn-lint 1.58.0 on every template, and `deploy/scripts/collector-configs.py --validate`: it renders the collector config of `ecs-fargate.yaml` (merge and convert, with and without logs) and of the Helm values (merge and convert), checks their pipelines, and runs `validate` on each in the collector image they pin (needs Docker; without `--validate` it only renders and checks). The published templates are at `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.
+
+The `collector-bump` workflow opens a PR that points the templates and Helm values at a new `ghcr.io/code-hud/hud-otel-collector` tag. hud-otel-collector's release workflow triggers it; you can also run it by hand with the tag.

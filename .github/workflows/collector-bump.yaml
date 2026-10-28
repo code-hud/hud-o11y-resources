@@ -35,13 +35,13 @@ jobs:
           docker manifest inspect "ghcr.io/code-hud/hud-otel-collector:$TAG" >/dev/null
           sed -i -E "s#(ghcr\.io/code-hud/hud-otel-collector:)[0-9][^ \"]*#\1$TAG#" deploy/aws/ecs-fargate.yaml
           sed -i -E "s#^(  tag: \")[^\"]*#\1$TAG#" deploy/helm/values.yaml
-          python3 scripts/unify.py
+          python3 deploy/scripts/unify.py
           for f in deploy/aws/ecs-fargate.yaml deploy/aws/hud-ecs.yaml deploy/helm/values.yaml; do
             grep -qF "$TAG" "$f" || { echo "$f has no $TAG: the sed patterns no longer match"; exit 1; }
           done
-      - run: python3 scripts/unify.py --check
+      - run: python3 deploy/scripts/unify.py --check
       - run: cfn-lint deploy/aws/*.yaml deploy/aws/parts/*.yaml
-      - run: python3 scripts/collector-configs.py --validate
+      - run: python3 deploy/scripts/collector-configs.py --validate
       - uses: peter-evans/create-pull-request@v8
         with:
           branch: bump-collector/${{ env.TAG }}

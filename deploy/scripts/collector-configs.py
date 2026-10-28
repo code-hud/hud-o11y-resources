@@ -37,7 +37,7 @@ def resolve(v, cond):
 
 
 def ecs_configs():
-    t = yaml.load((ROOT / "deploy/aws/ecs-fargate.yaml").read_text(), Loader)
+    t = yaml.load((ROOT / "aws/ecs-fargate.yaml").read_text(), Loader)
     image = t["Parameters"]["Image"]["Default"]
     env = t["Resources"]["TaskDefinition"]["Properties"]["ContainerDefinitions"][0]["Environment"]
     text, variables = next(e["Value"] for e in env if e["Name"] == "HUD_OTELCOL_CONFIG").value
@@ -60,8 +60,8 @@ def helm_merge(a, b):
 
 
 def helm_configs():
-    base = yaml.safe_load((ROOT / "deploy/helm/values.yaml").read_text())
-    convert = helm_merge(copy.deepcopy(base), yaml.safe_load((ROOT / "deploy/helm/values-convert.yaml").read_text()))
+    base = yaml.safe_load((ROOT / "helm/values.yaml").read_text())
+    convert = helm_merge(copy.deepcopy(base), yaml.safe_load((ROOT / "helm/values-convert.yaml").read_text()))
     for name, v in (("helm-merge", base), ("helm-convert", convert)):
         yield name, yaml.safe_dump(v["alternateConfig"], sort_keys=False), "%s:%s" % (v["image"]["repository"], v["image"]["tag"])
 
@@ -122,7 +122,7 @@ if __name__ == "__main__":
     run_validate = "--validate" in args
     args = [a for a in args if a != "--validate"]
     if len(args) > 1 or [a for a in args if a.startswith("-")]:
-        sys.exit("usage: scripts/collector-configs.py [--validate] [OUT_DIR]")
+        sys.exit("usage: deploy/scripts/collector-configs.py [--validate] [OUT_DIR]")
     out = Path(args[0] if args else tempfile.mkdtemp(prefix="collector-configs-"))
     out.mkdir(parents=True, exist_ok=True)
     images = set()

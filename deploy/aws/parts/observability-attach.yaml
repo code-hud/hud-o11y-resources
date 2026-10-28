@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   Attaches an OpenSearch Serverless collection and an AMP workspace (as a PromQL data source) to your existing
-  OpenSearch UI application (source for scripts/unify.py). Your app's other data sources are kept.
+  OpenSearch UI application (source for deploy/scripts/unify.py). Your app's other data sources are kept.
 
 Metadata:
   AWS::CloudFormation::Interface:

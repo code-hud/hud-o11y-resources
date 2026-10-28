@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Data part of the Observability Stack (source for scripts/unify.py): OpenSearch Serverless collection, OpenSearch
+  Data part of the Observability Stack (source for deploy/scripts/unify.py): OpenSearch Serverless collection, OpenSearch
   Ingestion pipeline and Amazon Managed Service for Prometheus, without the OpenSearch UI.
 
 Parameters:

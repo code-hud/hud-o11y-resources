@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  UI part of the Observability Stack (source for scripts/unify.py): an OpenSearch UI application with an
+  UI part of the Observability Stack (source for deploy/scripts/unify.py): an OpenSearch UI application with an
   Observability workspace, and AMP as a PromQL data source.
 
 Parameters:

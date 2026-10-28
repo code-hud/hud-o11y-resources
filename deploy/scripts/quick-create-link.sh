@@ -3,7 +3,7 @@
 # way Hud's onboarding builds them: hud-ecs.yaml for services on ECS, hud.yaml for EKS or anywhere else (add
 # &param_CollectorPlatform=None when the customer runs the collector themselves). Store the ExternalId with the customer: Hud sends it when assuming their
 # role.
-# Usage: scripts/quick-create-link.sh [external-id]   (env: REGION, BASE_URL, STACK_NAME)
+# Usage: deploy/scripts/quick-create-link.sh [external-id]   (env: REGION, BASE_URL, STACK_NAME)
 set -euo pipefail
 
 REGION=${REGION:-us-east-1}

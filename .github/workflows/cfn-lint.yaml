@@ -2,10 +2,10 @@ name: cfn-lint
 
 on:
   pull_request:
-    paths: ["deploy/**", "scripts/unify.py", "scripts/collector-configs.py", ".github/workflows/cfn-lint.yaml"]
+    paths: ["deploy/**", ".github/workflows/cfn-lint.yaml"]
   push:
     branches: [main]
-    paths: ["deploy/**", "scripts/unify.py", "scripts/collector-configs.py", ".github/workflows/cfn-lint.yaml"]
+    paths: ["deploy/**", ".github/workflows/cfn-lint.yaml"]
 
 jobs:
   lint:
@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install cfn-lint==1.58.0
-      - run: python3 scripts/unify.py --check
+      - run: python3 deploy/scripts/unify.py --check
       - run: cfn-lint deploy/aws/*.yaml deploy/aws/parts/*.yaml
 
   collector-config:
@@ -27,4 +27,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyyaml
-      - run: python3 scripts/collector-configs.py --validate
+      - run: python3 deploy/scripts/collector-configs.py --validate
