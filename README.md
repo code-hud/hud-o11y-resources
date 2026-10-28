@@ -1,4 +1,4 @@
-# o11y-templates
+# hud-o11y-resources
 
 Ready-made OpenSearch dashboards and Prometheus alert rules for data produced by the Hud SDK.
 
