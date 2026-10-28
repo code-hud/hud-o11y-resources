@@ -156,3 +156,7 @@ Differences from Hud's own detection:
 ## Development
 
 `python3 -m unittest discover -s tests` runs the script's tests against the dashboards in `dashboards/`.
+
+## License
+
+Copyright Hud. Licensed under the [Apache License, Version 2.0](LICENSE).
