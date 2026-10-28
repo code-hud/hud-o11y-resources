@@ -49,7 +49,8 @@ cd o11y-templates
 python3 scripts/dashboard-loader.py --target opensearch-ui \
   --workspace-id <workspace id> \
   --opensearch-data-source-id <data source id> \
-  --prometheus-connection <connection name>
+  --prometheus-connection <connection name> \
+  --prometheus-arn arn:aws:opensearch:<region>:<account>:datasource/<connection name>
 ```
 
 **Self-managed OpenSearch Dashboards:**
@@ -68,6 +69,7 @@ python3 scripts/dashboard-loader.py --target osd \
 | `--opensearch-data-source-id` | The ID of the OpenSearch data source that holds the Hud logs. Required for OpenSearch UI. For OpenSearch Dashboards, omit it to query the local cluster. | Open **Data sources** and click the domain; the ID is the last part of the page URL |
 | `--opensearch-data-source-title` | The data source's name, shown in the query editor. Optional. | Same page |
 | `--prometheus-connection` | The name of the Prometheus data connection from step 1. Omit it if you used the name the dashboards already have. | **Data sources** > **Data connections** |
+| `--prometheus-arn` | The ARN of the Prometheus data connection. Required for OpenSearch UI. Not used for OpenSearch Dashboards. | `aws opensearch get-direct-query-data-source --data-source-name <connection name>`, or build it as `arn:aws:opensearch:<region>:<account>:datasource/<connection name>` |
 | `--logs-index-pattern` | The index pattern of the Hud logs, if it is not `logs-otel-v1*`. | Your log pipeline's index settings |
 | `--out` | The output directory (default `out/`). | |
 | (arguments) | The files or directories to read, instead of `dashboards/`. | |

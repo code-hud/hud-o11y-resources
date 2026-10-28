@@ -8,7 +8,9 @@ What is rewritten:
   - the workspace in dashboard link URLs (/w/<id>/app/...), or the prefix removed when no workspace is used;
   - the OpenSearch data source id (data-source references and dataset.dataSource), or both removed
     for a self-managed OSD that queries its local cluster;
-  - the Prometheus connection name (dataset id/title of PromQL panels and dashboard variables);
+  - the Prometheus connection name (dataset id/title of PromQL panels and dashboard variables), and the
+    AMP data source ARN OpenSearch UI stores on Query variables (removed for a self-managed OSD);
+  - PromQL panels' index-pattern reference to the connection, which some exports add, is removed;
   - the logs index pattern (index-pattern title, dataset title, PPL "source = ..." clauses);
   - dashboard links that use '$__all', when the target is older than OSD 3.10 (see --links).
 
@@ -34,6 +36,7 @@ ALL_VALUE = "'$__all'"
 MIN_VERSION = (3, 9)
 ALL_MARKER_VERSION = (3, 10)
 OUTPUT_NAME = "hud.ndjson"
+ARN_RE = re.compile(r"^arn:aws[\w-]*:opensearch:[\w-]+:\d{12}:datasource/(.+)$")
 
 
 class Report:
@@ -183,6 +186,24 @@ def load(paths, report):
     return loaded
 
 
+def dedupe(lines, report):
+    """Per-dashboard exports repeat their shared objects (index pattern, common panels): keep one copy.
+
+    Copies that differ are left in place, so check() reports them as duplicates.
+    """
+    first, kept, dropped = {}, [], 0
+    for ln in lines:
+        key = (ln.obj.get("type"), ln.obj.get("id"))
+        if key in first and json.loads(first[key].raw) == json.loads(ln.raw):
+            dropped += 1
+            continue
+        first.setdefault(key, ln)
+        kept.append(ln)
+    if dropped:
+        report.note(f"inputs: {dropped} objects repeated identically across files; written once")
+    return kept
+
+
 # ---------------------------------------------------------------------------- version
 
 def parse_version(s):
@@ -231,6 +252,62 @@ def rewrite_prometheus(objs, mapping):
                 for k in ("id", "title"):
                     if ds.get(k) in mapping:
                         ds[k] = mapping[ds[k]]
+
+
+def prometheus_arns(objs):
+    found = set()
+    for o in objs:
+        for ds in datasets(o):
+            meta = (ds.get("dataSource") or {}).get("meta") if isinstance(ds.get("dataSource"), dict) else None
+            if str(ds.get("type")).upper() == "PROMETHEUS" and isinstance(meta, dict) and meta.get("arn"):
+                found.add(meta["arn"])
+    return found
+
+
+def rewrite_prometheus_arn(objs, arn):
+    """Set the AMP data source ARN that OpenSearch UI stores on Query variables, or drop it (arn=None)."""
+    for o in objs:
+        for ds in datasets(o):
+            src = ds.get("dataSource")
+            if str(ds.get("type")).upper() != "PROMETHEUS" or not isinstance(src, dict):
+                continue
+            meta = src.get("meta")
+            if not isinstance(meta, dict) or "arn" not in meta:
+                continue
+            if arn:
+                meta["arn"] = arn
+            else:
+                del meta["arn"]
+                if not meta:
+                    del src["meta"]
+
+
+def drop_prometheus_index_refs(objs, report):
+    """Remove the index-pattern reference some exports give PromQL panels, named after the connection.
+
+    No index pattern has that id, so the import fails with missing_references; OSD and OpenSearch UI
+    exports without it bind the panel through query.dataset alone.
+    """
+    dropped = 0
+    for o in objs:
+        meta = o.get("attributes", {}).get("kibanaSavedObjectMeta", {})
+        source = unwrap(meta.get("searchSourceJSON"))
+        if not isinstance(source, dict):
+            continue
+        ds = (source.get("query") or {}).get("dataset") or {}
+        ref_name = source.get("indexRefName")
+        if str(ds.get("type")).upper() != "PROMETHEUS" or not ref_name:
+            continue
+        refs = o.get("references", [])
+        keep = [r for r in refs if not (r.get("name") == ref_name and r.get("type") == "index-pattern"
+                                        and r.get("id") == ds.get("id"))]
+        if len(keep) != len(refs):
+            o["references"] = keep
+            del source["indexRefName"]
+            dropped += 1
+    if dropped:
+        report.note(f"PromQL panels: removed the index-pattern reference to the Prometheus connection from "
+                    f"{dropped} panels")
 
 
 def rewrite_index_pattern(objs, mapping):
@@ -383,7 +460,7 @@ def check(objs, where, args, report, old_values):
     for o in objs:
         key = (o.get("type"), o.get("id"))
         if key in ids:
-            report.error(f"duplicate object {key[0]} {key[1]} in {where[id(o)]} and {ids[key]}")
+            report.error(f"{key[0]} {key[1]} differs between {where[id(o)]} and {ids[key]}")
         ids[key] = where[id(o)]
     by_id = {i for _, i in ids}
     by_type = {}
@@ -412,6 +489,10 @@ def check(objs, where, args, report, old_values):
                 report.error(f"{w}: query dataset uses index pattern {ds.get('id')} that is not in the output")
             if t == "PROMETHEUS" and args.prometheus_names and ds.get("id") not in args.prometheus_names:
                 report.error(f"{w}: Prometheus connection {ds.get('id')} is not one of {sorted(args.prometheus_names)}")
+            meta = ds["dataSource"].get("meta") if isinstance(ds.get("dataSource"), dict) else None
+            if t == "PROMETHEUS" and isinstance(meta, dict) and meta.get("arn") \
+                    and meta["arn"] != args.prometheus_arn:
+                report.error(f"{w}: Prometheus data source ARN {meta['arn']} is not the target one")
         for target, _ in LINK_RE.findall(text):
             if target not in dashboards:
                 report.error(f"{w}: link to dashboard {target}, which is not in the output")
@@ -450,6 +531,9 @@ def main(argv=None):
     ap.add_argument("--opensearch-data-source-title", help="its title, shown in the query editor (optional)")
     ap.add_argument("--prometheus-connection", action="append", metavar="[OLD=]NEW",
                     help="name of the Prometheus data connection (default: keep the name in the export)")
+    ap.add_argument("--prometheus-arn", metavar="ARN",
+                    help="ARN of the AMP data source, arn:aws:opensearch:<region>:<account>:datasource/<name> "
+                         "(required for opensearch-ui when the export carries one; dropped for osd unless given)")
     ap.add_argument("--logs-index-pattern", action="append", metavar="[OLD=]NEW",
                     help="index pattern of the Hud logs, e.g. 'otel-logs-*' (default: keep)")
     ver = ap.add_argument_group("target version (decides how '$__all' dashboard links are written)")
@@ -468,7 +552,7 @@ def main(argv=None):
     for f in loaded:
         if out == f.resolve().parent or out / OUTPUT_NAME == f.resolve():
             report.error(f"--out {args.out} is the source directory; choose another one")
-    lines = [ln for ls in loaded.values() for ln in ls]
+    lines = dedupe([ln for ls in loaded.values() for ln in ls], report)
     objs = [ln.obj for ln in lines]
     where = {id(ln.obj): ln.where for ln in lines}
 
@@ -503,6 +587,7 @@ def main(argv=None):
                   if str(ds.get("type")).upper() == "PROMETHEUS" and ds.get("id")}
     ip_found = {o["attributes"]["title"] for o in objs if o.get("type") == "index-pattern"}
     ds_found = opensearch_data_sources(objs)
+    arn_found = prometheus_arns(objs)
     ws_found = set()
     for o in objs:
         map_strings(o, lambda s: (ws_found.update(WORKSPACE_RE.findall(s)), s)[1])
@@ -512,15 +597,30 @@ def main(argv=None):
             report.error("--workspace-id is required: the dashboard links are workspace paths (/w/<id>/app/...)")
         if ds_found and not args.opensearch_data_source_id:
             report.error("--opensearch-data-source-id is required: the logs panels name an OpenSearch data source")
+        if arn_found and not args.prometheus_arn:
+            report.error("--prometheus-arn is required: the dashboard variables carry the ARN of the exporting "
+                         f"account's Prometheus data source ({', '.join(sorted(arn_found))})")
 
     prom_map = parse_mapping(args.prometheus_connection, "Prometheus connection", prom_found, report)
     ip_map = parse_mapping(args.logs_index_pattern, "index pattern", ip_found, report)
     args.prometheus_names = {prom_map.get(p, p) for p in prom_found}
+    if args.prometheus_arn:
+        m = ARN_RE.match(args.prometheus_arn)
+        if not m:
+            report.error(f"--prometheus-arn {args.prometheus_arn!r} is not an OpenSearch data source ARN "
+                         f"(arn:aws:opensearch:<region>:<account>:datasource/<name>)")
+        elif args.prometheus_names and m.group(1) not in args.prometheus_names:
+            report.warn(f"--prometheus-arn names data source {m.group(1)!r}, but the panels use "
+                        f"{', '.join(sorted(args.prometheus_names))}")
 
     if report.errors:
         return finish(report, [])
 
+    drop_prometheus_index_refs(objs, report)
     rewrite_prometheus(objs, prom_map)
+    if arn_found:
+        rewrite_prometheus_arn(objs, args.prometheus_arn)
+        report.note(f"Prometheus ARN: {', '.join(sorted(arn_found))} -> {args.prometheus_arn or 'removed'}")
     rewrite_index_pattern(objs, ip_map)
     if ds_found:
         rewrite_data_source(objs, args.opensearch_data_source_id, args.opensearch_data_source_title,
@@ -543,6 +643,7 @@ def main(argv=None):
         "Prometheus connection": set(prom_map),
         "OpenSearch data source": ds_found - {args.opensearch_data_source_id},
         "workspace": ws_found - {args.workspace_id},
+        "Prometheus ARN": arn_found - {args.prometheus_arn},
     }
     check(objs, where, args, report, old_values)
 

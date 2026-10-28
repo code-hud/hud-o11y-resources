@@ -19,6 +19,7 @@ loader = importlib.util.module_from_spec(_spec)
 sys.modules["dashboard_loader"] = loader
 _spec.loader.exec_module(loader)
 
+TARGET_ARN = "arn:aws:opensearch:us-east-1:123456789012:datasource/prom-0"
 LINK_RE = re.compile(r"(?:/w/[^/\"\\]+)?/app/dashboards#/view/([^?\"\\]+)\?[^\"\\]*")
 
 
@@ -68,7 +69,12 @@ class DashboardLoaderTest(unittest.TestCase):
         cls.prometheus = {d["id"] for o in cls.objs for d in datasets(o) if str(d.get("type")).upper() == "PROMETHEUS"}
         cls.index_patterns = {o["attributes"]["title"] for o in cls.objs if o["type"] == "index-pattern"}
         cls.has_data_source = '"data-source"' in cls.text or "OpenSearch" in cls.text
-        cls.all_links = [ln for ln in links(cls.text) if "'$__all'" in ln]
+        unique = {(o["type"], o["id"]): o for o in cls.objs}
+        cls.keys = set(unique)
+        cls.all_links = [ln for o in unique.values() for ln in links(json.dumps(o)) if "'$__all'" in ln]
+        cls.arns = {d["dataSource"]["meta"]["arn"] for o in cls.objs for d in datasets(o)
+                    if isinstance(d.get("dataSource"), dict) and isinstance(d["dataSource"].get("meta"), dict)
+                    and d["dataSource"]["meta"].get("arn")}
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -85,6 +91,8 @@ class DashboardLoaderTest(unittest.TestCase):
                 "--out", out]
         args += [f"--prometheus-connection={p}=prom-{i}" for i, p in enumerate(sorted(self.prometheus))]
         args += [f"--logs-index-pattern={p}=renamed-{i}-*" for i, p in enumerate(sorted(self.index_patterns))]
+        if self.arns:
+            args += ["--prometheus-arn", TARGET_ARN]
         return args
 
     def copy_dashboards(self, edit=lambda text: text):
@@ -106,7 +114,8 @@ class DashboardLoaderTest(unittest.TestCase):
         self.assertEqual(code, 0, log)
         result = read_ndjson(out / "hud.ndjson")
         text = (out / "hud.ndjson").read_text()
-        self.assertEqual(len(result), len(self.objs))
+        self.assertEqual({(o["type"], o["id"]) for o in result}, self.keys)
+        self.assertEqual(len(result), len(self.keys))
         self.assertIsNone(loader.PLACEHOLDER_RE.search(text))
         for ln in links(text):
             self.assertTrue(ln.startswith("/w/ws42/app/"), ln)
@@ -116,10 +125,15 @@ class DashboardLoaderTest(unittest.TestCase):
                 self.assertTrue(d["id"].startswith("prom-"), d)
             if isinstance(d.get("dataSource"), dict) and d["dataSource"].get("id"):
                 self.assertEqual(d["dataSource"]["id"], "ds-9")
+            if isinstance(d.get("dataSource"), dict) and isinstance(d["dataSource"].get("meta"), dict):
+                self.assertEqual(d["dataSource"]["meta"].get("arn"), TARGET_ARN)
+        ids = {(o["type"], o["id"]) for o in result}
         for o in result:
             for r in o.get("references", []):
                 if r["type"] == "data-source":
                     self.assertEqual(r["id"], "ds-9")
+                else:
+                    self.assertIn((r["type"], r["id"]), ids, o["id"])
             if o["type"] == "index-pattern":
                 self.assertTrue(o["attributes"]["title"].startswith("renamed-"))
         for pattern in self.index_patterns:
@@ -141,6 +155,7 @@ class DashboardLoaderTest(unittest.TestCase):
         result = read_ndjson(out / "hud.ndjson")
         text = (out / "hud.ndjson").read_text()
         self.assertFalse(any(r["type"] == "data-source" for o in result for r in o.get("references", [])))
+        self.assertNotIn("arn:aws", text)
         for ln in links(text):
             self.assertTrue(ln.startswith("/app/"), ln)
         self.assertEqual(len([ln for ln in links(text) if "'$__all'" in ln]), len(self.all_links))
@@ -169,6 +184,24 @@ class DashboardLoaderTest(unittest.TestCase):
                                    "value": "$" + k}, matchers, f"{target}: {d}")
         for ln in links((out / "hud.ndjson").read_text()):
             self.assertNotIn("'$__all'", ln)
+
+    def test_opensearch_ui_requires_prometheus_arn(self):
+        if not self.arns:
+            self.skipTest("the dashboards carry no Prometheus data source ARN")
+        args = self.opensearch_ui_args(self.tmp / "out")
+        args = args[:args.index("--prometheus-arn")]
+        code, log = self.run_loader(DASHBOARDS, *args)
+        self.assertEqual(code, 1)
+        self.assertIn("--prometheus-arn is required", log)
+
+    def test_copies_of_an_object_that_differ_are_an_error(self):
+        target = next(o for o in self.objs if o["type"] == "dashboard")
+        src = self.copy_dashboards()
+        changed = dict(target, attributes=dict(target["attributes"], title="changed"))
+        (src / "zz-extra.ndjson").write_text(json.dumps(changed) + "\n")
+        code, log = self.run_loader(src, "--target", "osd", "--osd-version", "3.10", "--out", self.tmp / "out")
+        self.assertEqual(code, 1)
+        self.assertIn(f"dashboard {target['id']} differs between", log)
 
     def test_dangling_dashboard_link_is_an_error(self):
         targets = {LINK_RE.match(ln).group(1) for ln in links(self.text)}
