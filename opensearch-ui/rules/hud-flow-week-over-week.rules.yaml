@@ -1,0 +1,42 @@
+# Hud week-over-week endpoint degradation on the Hud SDK metrics in AMP.
+# Matches Hud's week-over-week endpoint degradation detection (defaults):
+#   current [now-7d, now] vs reference [now-14d, now-7d]; per flow the average of hourly p90s must be >= +70%;
+#   >= 350 invocations in both windows; window p90 >= 150ms; >= 84 hourly buckets with data in both windows;
+#   stddev/avg of hourly p90 <= 1 in both windows; 99% confidence intervals (avg -/+ 2.58*sd/sqrt(n)) of the two windows must not overlap.
+# $value = current avg hourly p90 / reference avg hourly p90. Runs hourly.
+# NOT mirrored: Hud's requirement of a degraded source function, per-entity overrides/exclusions, session tags, cooldown.
+# No flow-type selector: one rule shape covers every flow type (http, graphql, grpc, kafka, sqs, queues, custom, ...).
+# Hud itself only runs degradation on endpoint + kafka entities, so this alerts on more flows than Hud does.
+# code_flow_duration_seconds is a native histogram: histogram_quantile / histogram_count work on increase() of it.
+# "hourly p90" = histogram_quantile(0.9, sum by (...) (increase(...[1h]))) evaluated at 1h steps (subquery, epoch-aligned),
+# empty hours are dropped (> 0), like Hud's "buckets with invocations".
+groups:
+  - name: hud-week-over-week-degradation
+    interval: 1h
+    rules:
+      - alert: HudWeekOverWeekDegradation
+        expr: |
+          (
+            avg_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h])
+            / on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
+            avg_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h] offset 7d)
+          ) >= 1.7
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (count_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h]) >= 84)
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (count_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h] offset 7d) >= 84)
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (stddev_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h]) / avg_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h]) <= 1)
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (stddev_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h] offset 7d) / avg_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h] offset 7d) <= 1)
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+            (avg_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h] offset 7d) + 2.58 * stddev_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h] offset 7d) / sqrt(count_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h] offset 7d)))
+            < (avg_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h]) - 2.58 * stddev_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h]) / sqrt(count_over_time((histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[1h]))) > 0)[7d:1h])))
+          )
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (increase(code_flow_duration_seconds[7d]))) >= 0.15)
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (histogram_count(increase(code_flow_duration_seconds[7d]))) >= 350)
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (histogram_count(increase(code_flow_duration_seconds[7d] offset 7d))) >= 350)
+        for: 0m
+        labels:
+          severity: warning
+          endpoint_method: "{{ $labels.http_request_method }}"
+          endpoint_path: '{{ if $labels.http_route }}{{ $labels.http_route }}{{ else }}{{ $labels.code_flow_name }}{{ end }}'
+        annotations:
+          summary: "Hud-style week-over-week p90 degradation on {{ $labels.service_name }} {{ $labels.code_flow_name }}"
+          description: "Average hourly p90 over the last 7d is {{ $value | humanize }}x the previous 7d (alert at >= 1.7x, >= 350 invocations per week, >= 84 hourly buckets, p90 >= 150ms)."

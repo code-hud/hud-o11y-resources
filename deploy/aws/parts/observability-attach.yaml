@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Attaches an OpenSearch Serverless collection and an AMP workspace (as a PromQL data source) to your existing
+  OpenSearch UI application (source for deploy/scripts/unify.py). Your app's other data sources are kept.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: OpenSearch UI (optional) }
+        Parameters: [ExistingUiAppId]
+
+Parameters:
+  Name:
+    Type: String
+    AllowedPattern: ^[a-z][a-z0-9-]{2,24}$
+  CollectionArn:
+    Type: String
+  AmpWorkspaceArn:
+    Type: String
+  AmpWorkspaceId:
+    Type: String
+  ExistingUiAppId:
+    Type: String
+    Default: ""
+    AllowedPattern: ^([a-z0-9]{3,30})?$
+    Description: Empty creates a new OpenSearch UI application with an Observability workspace. If you already have one, put its id here (aws opensearch list-applications) to add Hud's collection and AMP workspace to it as data sources instead; your other data sources are kept.
+
+Conditions:
+  AttachToUi: !Not [!Equals [!Ref ExistingUiAppId, ""]]
+
+Resources:
+  # Lets the UI query AMP with PromQL (also manages AMP alert rules and silences, hence aps:* on rule groups).
+  AttachDirectQueryRole:
+    Type: AWS::IAM::Role
+    Condition: AttachToUi
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: directquery.opensearchservice.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: amp
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: aps:*
+                Resource:
+                  - !Ref AmpWorkspaceArn
+                  - !Sub arn:${AWS::Partition}:aps:${AWS::Region}:${AWS::AccountId}:rulegroupsnamespace/${AmpWorkspaceId}/*
+
+  AttachRole:
+    Type: AWS::IAM::Role
+    Condition: AttachToUi
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: attach
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ponytail: same broad actions as the UI part's Setup; scope to the app and data source ARNs once verified in a real deploy.
+              - Effect: Allow
+                Action: [es:*, opensearch:*, aoss:BatchGetCollection, aoss:APIAccessAll]
+                Resource: "*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt AttachDirectQueryRole.Arn
+
+  # UpdateApplication takes the full dataSources list, so this merges into the app's current list and, on delete,
+  # removes only the two entries it added. No workspace is created: you pick which of your workspaces gets them.
+  AttachFunction:
+    Type: AWS::Lambda::Function
+    Condition: AttachToUi
+    Properties:
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 300
+      Role: !GetAtt AttachRole.Arn
+      Code:
+        ZipFile: |
+          import json, urllib.request
+          import boto3
+
+          # Per app, so moving the stack to another app can't delete the new app's data source.
+          def dqs_name(p):
+              return "%s_%s" % (p["DataSourceName"], p["AppId"])
+
+          # Some OpenSearch calls report a missing resource as ValidationException ("Data source not found").
+          def missing(e):
+              err = getattr(e, "response", {}).get("Error", {})
+              return err.get("Code") == "ResourceNotFoundException" or (
+                  err.get("Code") == "ValidationException" and "not found" in err.get("Message", "").lower())
+
+          def ours(os_, p):
+              arns = [p["CollectionArn"]]
+              try:
+                  arns.append(os_.get_direct_query_data_source(DataSourceName=dqs_name(p))["DataSourceArn"])
+              except Exception as e:
+                  if not missing(e):
+                      raise
+              return arns
+
+          def attach(p):
+              os_ = boto3.client("opensearch")
+              try:
+                  os_.add_direct_query_data_source(DataSourceName=dqs_name(p), Description="AMP for Hud",
+                      DataSourceType={"Prometheus": {"RoleArn": p["DirectQueryRoleArn"], "WorkspaceArn": p["WorkspaceArn"]}})
+              except os_.exceptions.ResourceAlreadyExistsException:
+                  pass
+              current = os_.get_application(id=p["AppId"]).get("dataSources", [])
+              have = {d["dataSourceArn"] for d in current}
+              added = [{"dataSourceArn": a} for a in ours(os_, p) if a not in have]
+              if added:
+                  os_.update_application(id=p["AppId"], dataSources=current + added)
+
+          def detach(p):
+              os_ = boto3.client("opensearch")
+              mine = set(ours(os_, p))
+              try:
+                  current = os_.get_application(id=p["AppId"]).get("dataSources", [])
+                  kept = [d for d in current if d["dataSourceArn"] not in mine]
+                  if len(kept) != len(current):
+                      os_.update_application(id=p["AppId"], dataSources=kept)
+              except Exception as e:
+                  if not missing(e):
+                      raise
+              try:
+                  os_.delete_direct_query_data_source(DataSourceName=dqs_name(p))
+              except Exception as e:
+                  if not missing(e):
+                      raise
+
+          # CloudFormation waits for this PUT; the URL is presigned without a content type, so the header must be empty.
+          def respond(event, status, physical_id, reason):
+              body = json.dumps({"Status": status, "Reason": reason, "PhysicalResourceId": physical_id, "StackId": event["StackId"],
+                                 "RequestId": event["RequestId"], "LogicalResourceId": event["LogicalResourceId"], "Data": {}}).encode()
+              urllib.request.urlopen(urllib.request.Request(event["ResponseURL"], data=body, method="PUT", headers={"Content-Type": ""}), timeout=30)
+
+          # The physical id is the app id: pointing the stack at another app makes CloudFormation delete (detach) the old one.
+          def handler(event, context):
+              p = event["ResourceProperties"]
+              status, physical_id, reason = "FAILED", event.get("PhysicalResourceId", p["AppId"]), "see the function's CloudWatch logs"
+              try:
+                  if event["RequestType"] == "Delete":
+                      detach(p)
+                  else:
+                      attach(p)
+                  status, physical_id, reason = "SUCCESS", p["AppId"], ""
+              except Exception as e:
+                  print("failed:", repr(e))
+                  reason = str(e)[:200]
+              finally:
+                  respond(event, status, physical_id, reason)
+
+  Attach:
+    Type: AWS::CloudFormation::CustomResource
+    Condition: AttachToUi
+    Properties:
+      ServiceToken: !GetAtt AttachFunction.Arn
+      ServiceTimeout: 300
+      AppId: !Ref ExistingUiAppId
+      CollectionArn: !Ref CollectionArn
+      WorkspaceArn: !Ref AmpWorkspaceArn
+      DirectQueryRoleArn: !GetAtt AttachDirectQueryRole.Arn
+      DataSourceName: !Join ["_", [!Join ["_", !Split ["-", !Ref Name]], hud_prometheus]]

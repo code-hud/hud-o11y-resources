@@ -1,0 +1,8 @@
+# opensearch-ui/scripts/dashboard-loader.py output
+/out/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

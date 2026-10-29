@@ -1,0 +1,58 @@
+name: collector-bump
+
+# Sent by hud-otel-collector's release workflow (repository_dispatch, event_type collector-release,
+# client_payload.version = release version, a leading "v" is dropped), or run by hand.
+# PRs opened with GITHUB_TOKEN don't trigger the cfn-lint workflow, so the checks run here first.
+on:
+  repository_dispatch:
+    types: [collector-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Collector image tag, e.g. 0.163.2-hud.3
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency: collector-bump
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.event.client_payload.version || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install cfn-lint==1.58.0
+      - name: Bump the image tag
+        run: |
+          TAG=${VERSION#v}
+          [[ $TAG =~ ^[0-9]+\.[0-9]+\.[0-9]+(-hud\.[0-9]+)?$ ]] || { echo "invalid tag: $TAG"; exit 1; }
+          echo "TAG=$TAG" >>"$GITHUB_ENV"
+          docker manifest inspect "ghcr.io/code-hud/hud-otel-collector:$TAG" >/dev/null
+          sed -i -E "s#(ghcr\.io/code-hud/hud-otel-collector:)[0-9][^ \"]*#\1$TAG#" deploy/aws/ecs-fargate.yaml
+          sed -i -E "s#^(  tag: \")[^\"]*#\1$TAG#" deploy/helm/values.yaml
+          python3 deploy/scripts/unify.py
+          for f in deploy/aws/ecs-fargate.yaml deploy/aws/hud-ecs.yaml deploy/helm/values.yaml; do
+            grep -qF "$TAG" "$f" || { echo "$f has no $TAG: the sed patterns no longer match"; exit 1; }
+          done
+      - run: python3 deploy/scripts/unify.py --check
+      - run: cfn-lint deploy/aws/*.yaml deploy/aws/parts/*.yaml
+      - run: python3 deploy/scripts/collector-configs.py --validate
+      - uses: peter-evans/create-pull-request@v8
+        with:
+          branch: bump-collector/${{ env.TAG }}
+          add-paths: deploy
+          title: Bump hud-otel-collector to ${{ env.TAG }}
+          commit-message: Bump hud-otel-collector to ${{ env.TAG }}
+          body: |
+            Points the templates and Helm values at `ghcr.io/code-hud/hud-otel-collector:${{ env.TAG }}`.
+            `unify.py --check`, cfn-lint and `collector-configs.py --validate` (every rendered config, in the new image) passed in the bump run.
+
+            After merging, upload `deploy/aws/ecs-fargate.yaml` and `deploy/aws/hud-ecs.yaml` to
+            `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.

@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: IAM role that lets the Hud OpenTelemetry collector on EKS write to Amazon Managed Service for Prometheus.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: EKS only - the collector's IAM role }
+        Parameters: [ClusterName, AuthMode, OidcProvider, Namespace, ServiceAccount, AmpWorkspaceId]
+
+Parameters:
+  ClusterName:
+    Type: String
+    Description: Your EKS cluster the collector runs in.
+  AuthMode:
+    Type: String
+    Default: PodIdentity
+    AllowedValues: [PodIdentity, IRSA]
+    Description: PodIdentity needs the eks-pod-identity-agent add-on. IRSA needs the cluster's IAM OIDC provider.
+  OidcProvider:
+    Type: String
+    Default: ""
+    Description: IRSA only. The cluster's OIDC issuer without https://, e.g. oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE
+  Namespace:
+    Type: String
+    Default: hud
+  ServiceAccount:
+    Type: String
+    Default: hud-collector
+  AmpWorkspaceId:
+    Type: String
+    Default: ""
+    Description: Your existing AMP workspace id (ws-...). Leave empty to create one.
+
+Rules:
+  IrsaNeedsOidc:
+    RuleCondition: !Equals [!Ref AuthMode, IRSA]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref OidcProvider, ""]]
+        AssertDescription: OidcProvider is required when AuthMode is IRSA.
+
+Conditions:
+  CreateAmp: !Equals [!Ref AmpWorkspaceId, ""]
+  PodIdentity: !Equals [!Ref AuthMode, PodIdentity]
+
+Resources:
+  AmpWorkspace:
+    Type: AWS::APS::Workspace
+    Condition: CreateAmp
+    Properties:
+      Alias: !Sub ${AWS::StackName}
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      # A JSON string because the IRSA condition keys contain the OIDC provider, and YAML keys can't use !Sub.
+      AssumeRolePolicyDocument: !If
+        - PodIdentity
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: { Service: pods.eks.amazonaws.com }
+              Action: [sts:AssumeRole, sts:TagSession]
+        - !Sub |
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": { "Federated": "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/${OidcProvider}" },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": { "StringEquals": {
+                "${OidcProvider}:sub": "system:serviceaccount:${Namespace}:${ServiceAccount}",
+                "${OidcProvider}:aud": "sts.amazonaws.com"
+              }}
+            }]
+          }
+      Policies:
+        - PolicyName: amp-remote-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: aps:RemoteWrite
+                Resource: !If
+                  - CreateAmp
+                  - !GetAtt AmpWorkspace.Arn
+                  - !Sub arn:${AWS::Partition}:aps:${AWS::Region}:${AWS::AccountId}:workspace/${AmpWorkspaceId}
+
+  PodIdentityAssociation:
+    Type: AWS::EKS::PodIdentityAssociation
+    Condition: PodIdentity
+    # hud.yaml makes ClusterName optional; its Rules require it whenever this is created.
+    Metadata:
+      cfn-lint: { config: { ignore_checks: [W1030] } }
+    Properties:
+      ClusterName: !Ref ClusterName
+      Namespace: !Ref Namespace
+      ServiceAccount: !Ref ServiceAccount
+      RoleArn: !GetAtt Role.Arn
+
+Outputs:
+  RoleArn:
+    Description: IRSA only - set as serviceAccount.annotations."eks.amazonaws.com/role-arn" in the Helm values.
+    Value: !GetAtt Role.Arn
+  AmpRemoteWriteUrl:
+    Description: Pass to Helm as AMP_REMOTE_WRITE_URL.
+    Value: !Sub
+      - https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${Ws}/api/v1/remote_write
+      - Ws: !If [CreateAmp, !GetAtt AmpWorkspace.WorkspaceId, !Ref AmpWorkspaceId]
+  AmpWorkspaceId:
+    Description: Pass to the access stack (hud-access.yaml) as AmpWorkspaceId.
+    Value: !If [CreateAmp, !GetAtt AmpWorkspace.WorkspaceId, !Ref AmpWorkspaceId]
+  AmpQueryUrl:
+    Value: !Sub
+      - https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${Ws}/api/v1/query
+      - Ws: !If [CreateAmp, !GetAtt AmpWorkspace.WorkspaceId, !Ref AmpWorkspaceId]

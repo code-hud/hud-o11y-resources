@@ -1,0 +1,61 @@
+# Error rate spike (alpha): error-rate spike per fingerprint. The last hour's error rate of an error (issue_fingerprint) on a flow is at least 5% and above
+# twice its own p99 hourly error rate over the previous 8 days, with at least 50 invocations of the flow in the hour.
+# Companion of HudFlowErrors (hud-alerts.yml).
+# Modelled on Hud's post-deploy error-rate detection (multiplier 2, peak quantile 0.99, 8-day baseline, 20 qualified invocations per
+# baseline bucket), without the deployment id, the 5-minute buckets and the 37-day history.
+# A fingerprint with no baseline series (new in the last 8 days) never fires here; HudFlowErrors covers new errors at >= 1%.
+# The baseline subquery steps are epoch-aligned hours and end one hour before now ("offset 1h"), so it excludes the window checked.
+# Baseline hours count only when the flow had >= 20 invocations.
+# Cumulative counters and native histograms: increase() and histogram_count(), as in the other Hud rules. All flow types, no selector.
+groups:
+  - name: hud-error-rate-spike
+    interval: 1h
+    rules:
+      - alert: HudErrorRateSpike
+        expr: |
+          (
+            (
+              (
+                (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
+                increase(hud_flow_issues_total{http_response_status_code!~"4.."}[1h])
+              ))
+                / on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left ()
+                (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+                histogram_count(increase(code_flow_duration_seconds[1h]))
+              ))
+              )
+              > on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint)
+              (
+                2 * quantile_over_time(0.99,
+                  (
+                    (
+                      (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
+                increase(hud_flow_issues_total{http_response_status_code!~"4.."}[1h])
+              ))
+                      / on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left ()
+                      (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+                histogram_count(increase(code_flow_duration_seconds[1h]))
+              ))
+                    )
+                    and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
+                    (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+                histogram_count(increase(code_flow_duration_seconds[1h]))
+              )) >= 20
+                  )[8d:1h] offset 1h
+                )
+              )
+            ) >= 0.05
+          )
+          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
+          (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+                histogram_count(increase(code_flow_duration_seconds[1h]))
+              )) >= 50
+        for: 0m
+        labels:
+          severity: critical
+          version: alpha
+          endpoint_method: "{{ $labels.http_request_method }}"
+          endpoint_path: '{{ if $labels.http_route }}{{ $labels.http_route }}{{ else }}{{ $labels.code_flow_name }}{{ end }}'
+        annotations:
+          summary: "[alpha] Error rate spike on {{ $labels.service_name }} {{ $labels.code_flow_name }}"
+          description: "Error {{ $labels.issue_fingerprint }} rate {{ $value | humanizePercentage }} over the last hour (>= 5%), above twice its p99 hourly rate of the previous 8 days (>= 50 invocations)."
