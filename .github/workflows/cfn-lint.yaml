@@ -2,10 +2,10 @@ name: cfn-lint
 
 on:
   pull_request:
-    paths: ["deploy/**", ".github/workflows/cfn-lint.yaml"]
+    paths: ["deploy/**", "opensearch-ui/rules/hud-hourly.rules.yaml", ".github/workflows/cfn-lint.yaml"]
   push:
     branches: [main]
-    paths: ["deploy/**", ".github/workflows/cfn-lint.yaml"]
+    paths: ["deploy/**", "opensearch-ui/rules/hud-hourly.rules.yaml", ".github/workflows/cfn-lint.yaml"]
 
 jobs:
   lint:

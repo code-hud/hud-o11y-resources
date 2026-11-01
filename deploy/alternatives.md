@@ -18,7 +18,7 @@ Your collection, pipeline, workspace and UI app aren't changed, except as below.
 
 ```sh
 aws cloudformation deploy --stack-name hud --template-file deploy/aws/hud-ecs.yaml \
-  --capabilities CAPABILITY_IAM --parameter-overrides \
+  --s3-bucket <bucket> --capabilities CAPABILITY_IAM --parameter-overrides \
   ClusterName=<cluster> VpcId=<vpc> SubnetIds=<subnet-a>,<subnet-b> AllowedCidr=<vpc cidr> \
   ExternalId=<external id from Hud> ExistingUiAppId=<your OpenSearch UI app id>
 ```
@@ -38,7 +38,9 @@ Then point your apps at the stack's `OtlpEndpoint` and `HudExporter` outputs, as
 ## Separate stacks
 
 The collector stack creates an AMP workspace unless you pass one, and grants the collector only
-`aps:RemoteWrite` on it. Without OSIS parameters, only metrics are sent.
+`aps:RemoteWrite` on it. Without OSIS parameters, only metrics are sent. A workspace the stack creates (or
+`observability.yaml` creates) also gets the `hud-hourly` recording rules; for a workspace you built some other way,
+upload them yourself ([Hourly recording rules](../opensearch-ui/README.md#hourly-recording-rules)).
 
 `deploy/aws/ecs-fargate.yaml` runs the collector as a service in your existing ECS cluster and VPC, reachable at
 `http://hud-collector.hud.internal:4318` (private DNS; set `DnsNamespace` to another name, e.g. `hud2.internal`,

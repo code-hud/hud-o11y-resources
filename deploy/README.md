@@ -6,7 +6,7 @@ CloudFormation templates and Helm values for the [Hud OpenTelemetry collector](h
 | --- | --- |
 | `deploy/aws/` | CloudFormation templates. `parts/` holds the sources; `observability.yaml`, `hud-ecs.yaml`, and `hud.yaml` are generated from them. |
 | `deploy/helm/` | Helm values for the collector chart: `values.yaml`, and `values-convert.yaml` for convert mode. |
-| `deploy/scripts/unify.py` | Generates the one-stack templates from `deploy/aws/parts/` and the separate templates. |
+| `deploy/scripts/unify.py` | Generates the one-stack templates from `deploy/aws/parts/` and the separate templates, and embeds `opensearch-ui/rules/hud-hourly.rules.yaml` in the templates that create an AMP workspace. |
 | `deploy/scripts/collector-configs.py` | Renders every collector config the templates and Helm values can produce, and checks it. |
 | `deploy/scripts/quick-create-link.sh` | Prints a new ExternalId and "Launch in CloudFormation" links with it prefilled. |
 | [`deploy/alternatives.md`](alternatives.md) | Deploys that use an Observability Stack or AMP workspace you already have. |
@@ -83,9 +83,12 @@ opens port 4318 only to `AllowedCidr` (your VPC CIDR; `0.0.0.0/0` is rejected), 
 internet. For private subnets with a NAT gateway, see [alternatives](alternatives.md#private-subnets). The task pulls the public
 `ghcr.io/code-hud/hud-otel-collector` image; to use a copy in your account's ECR, pass `Image`.
 
+The one-stack templates are larger than the 51,200 bytes CloudFormation accepts inline, so the CLI uploads them
+to an S3 bucket of yours in the stack's region (`--s3-bucket`).
+
 ```sh
 aws cloudformation deploy --stack-name hud --template-file deploy/aws/hud-ecs.yaml \
-  --capabilities CAPABILITY_IAM --parameter-overrides \
+  --s3-bucket <bucket> --capabilities CAPABILITY_IAM --parameter-overrides \
   ClusterName=<cluster> VpcId=<vpc> SubnetIds=<subnet-a>,<subnet-b> AllowedCidr=<vpc cidr> \
   ExternalId=<external id from Hud>
 ```
@@ -106,7 +109,7 @@ the official chart with `deploy/helm/values.yaml`:
 
 ```sh
 aws cloudformation deploy --stack-name hud --template-file deploy/aws/hud.yaml \
-  --capabilities CAPABILITY_IAM --parameter-overrides \
+  --s3-bucket <bucket> --capabilities CAPABILITY_IAM --parameter-overrides \
   CollectorPlatform=EKS ClusterName=<cluster> ExternalId=<external id from Hud>
 helm install hud opentelemetry-collector --repo https://open-telemetry.github.io/opentelemetry-helm-charts \
   -n hud --create-namespace -f deploy/helm/values.yaml \

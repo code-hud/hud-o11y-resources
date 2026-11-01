@@ -150,13 +150,17 @@ Differences from Hud's own detection:
 
 ### Hourly recording rules
 
-`hud-hourly.rules.yaml` holds recording rules, not alerts: each one records the last hour's increase per service (`job:`), flow (`flow:`), function (`function:`) and instance (`instance:`), so dashboards can sum hourly points instead of scanning raw native-histogram samples over the whole range. Upload it as its own namespace:
+`hud-hourly.rules.yaml` holds recording rules, not alerts: each one records the last hour's increase per service (`job:`), flow (`flow:`), function (`function:`) and instance (`instance:`), so dashboards can sum hourly points instead of scanning raw native-histogram samples over the whole range.
+
+The CloudFormation templates in `deploy/aws/` install it for you as the `hud-hourly` namespace in every AMP workspace they create. If you bring your own workspace (`AmpWorkspaceId` on `ecs-fargate.yaml` or `eks-iam.yaml`), they leave it alone, since it may already have the namespace. In that case, or with a workspace from somewhere else, upload the file yourself:
 
 ```bash
 aws amp create-rule-groups-namespace --workspace-id <workspace-id> --name hud-hourly \
   --data fileb://opensearch-ui/rules/hud-hourly.rules.yaml
 # update: aws amp put-rule-groups-namespace ... (same arguments)
 ```
+
+The templates embed a copy of the file. After you edit it, run `python3 deploy/scripts/unify.py` to update them; CI's `unify.py --check` fails if they are out of date.
 
 ## Development
 
