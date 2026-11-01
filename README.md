@@ -13,7 +13,7 @@ Observability resources for data produced by the Hud SDK. The repository has two
 ├── opensearch-ui/
 │   ├── README.md
 │   ├── dashboards/          # NDJSON saved-object exports
-│   ├── rules/               # Prometheus alert rules
+│   ├── rules/               # Prometheus alert and recording rules
 │   ├── scripts/
 │   │   └── dashboard-loader.py
 │   └── tests/

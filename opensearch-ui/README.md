@@ -148,6 +148,16 @@ Differences from Hud's own detection:
 - There is no flow-type selector, so custom and queue flows are included although Hud only runs degradation on endpoint and Kafka entities.
 - `hud-function-day-over-week.rules.yaml` is inert until the `code_function_name` regex (`__NO_FUNCTION_SELECTED__`) is set to the functions you watch. It is expensive: it queries per-function series over 8 days.
 
+### Hourly recording rules
+
+`hud-hourly.rules.yaml` holds recording rules, not alerts: each one records the last hour's increase per service (`job:`), flow (`flow:`), function (`function:`) and instance (`instance:`), so dashboards can sum hourly points instead of scanning raw native-histogram samples over the whole range. Upload it as its own namespace:
+
+```bash
+aws amp create-rule-groups-namespace --workspace-id <workspace-id> --name hud-hourly \
+  --data fileb://opensearch-ui/rules/hud-hourly.rules.yaml
+# update: aws amp put-rule-groups-namespace ... (same arguments)
+```
+
 ## Development
 
 `python3 -m unittest discover -s opensearch-ui/tests` runs the loader's tests against the dashboards in `opensearch-ui/dashboards/`.
