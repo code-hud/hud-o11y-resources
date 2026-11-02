@@ -38,9 +38,8 @@ Then point your apps at the stack's `OtlpEndpoint` and `HudExporter` outputs, as
 ## Separate stacks
 
 The collector stack creates an AMP workspace unless you pass one, and grants the collector only
-`aps:RemoteWrite` on it. Without OSIS parameters, only metrics are sent. A workspace the stack creates (or
-`observability.yaml` creates) also gets the `hud-hourly` recording rules; for a workspace you built some other way,
-upload them yourself ([Hourly recording rules](../opensearch-ui/README.md#hourly-recording-rules)).
+`aps:RemoteWrite` on it. Without OSIS parameters, only metrics are sent. A workspace the stack creates also gets the
+hourly recording rules; for one you pass, see [Hourly recording rules](README.md#hourly-recording-rules).
 
 `deploy/aws/ecs-fargate.yaml` runs the collector as a service in your existing ECS cluster and VPC, reachable at
 `http://hud-collector.hud.internal:4318` (private DNS; set `DnsNamespace` to another name, e.g. `hud2.internal`,

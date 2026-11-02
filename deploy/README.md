@@ -6,7 +6,7 @@ CloudFormation templates and Helm values for the [Hud OpenTelemetry collector](h
 | --- | --- |
 | `deploy/aws/` | CloudFormation templates. `parts/` holds the sources; `observability.yaml`, `hud-ecs.yaml`, and `hud.yaml` are generated from them. |
 | `deploy/helm/` | Helm values for the collector chart: `values.yaml`, and `values-convert.yaml` for convert mode. |
-| `deploy/scripts/unify.py` | Generates the one-stack templates from `deploy/aws/parts/` and the separate templates, and embeds `opensearch-ui/rules/hud-hourly.rules.yaml` in the templates that create an AMP workspace. |
+| `deploy/scripts/unify.py` | Generates the one-stack templates from `deploy/aws/parts/` and the separate templates. |
 | `deploy/scripts/collector-configs.py` | Renders every collector config the templates and Helm values can produce, and checks it. |
 | `deploy/scripts/quick-create-link.sh` | Prints a new ExternalId and "Launch in CloudFormation" links with it prefilled. |
 | [`deploy/alternatives.md`](alternatives.md) | Deploys that use an Observability Stack or AMP workspace you already have. |
@@ -83,8 +83,8 @@ opens port 4318 only to `AllowedCidr` (your VPC CIDR; `0.0.0.0/0` is rejected), 
 internet. For private subnets with a NAT gateway, see [alternatives](alternatives.md#private-subnets). The task pulls the public
 `ghcr.io/code-hud/hud-otel-collector` image; to use a copy in your account's ECR, pass `Image`.
 
-The one-stack templates are larger than the 51,200 bytes CloudFormation accepts inline, so the CLI uploads them
-to an S3 bucket of yours in the stack's region (`--s3-bucket`).
+`hud-ecs.yaml` is larger than the 51,200 bytes CloudFormation accepts inline, so the CLI uploads it to an S3 bucket
+of yours in the stack's region (`--s3-bucket`).
 
 ```sh
 aws cloudformation deploy --stack-name hud --template-file deploy/aws/hud-ecs.yaml \
@@ -109,7 +109,7 @@ the official chart with `deploy/helm/values.yaml`:
 
 ```sh
 aws cloudformation deploy --stack-name hud --template-file deploy/aws/hud.yaml \
-  --s3-bucket <bucket> --capabilities CAPABILITY_IAM --parameter-overrides \
+  --capabilities CAPABILITY_IAM --parameter-overrides \
   CollectorPlatform=EKS ClusterName=<cluster> ExternalId=<external id from Hud>
 helm install hud opentelemetry-collector --repo https://open-telemetry.github.io/opentelemetry-helm-charts \
   -n hud --create-namespace -f deploy/helm/values.yaml \
@@ -187,8 +187,45 @@ Deployed an earlier version? Its policy gave your account root read and write. U
 in your account read-only; what the OpenSearch UI shows doesn't change. If something of yours writes to the
 collection, pass its role in `DataWritePrincipals` in the same update.
 
+## Hourly recording rules
+
+`deploy/aws/hud-hourly-rules.yaml` creates the `hud-hourly` rule namespace in an AMP workspace: recording rules
+that store each service's, flow's, function's and instance's increase over the last hour, so the Hud dashboards
+can sum hourly points instead of scanning raw samples. It is the only place these rules live.
+
+Every template that creates an AMP workspace installs it as a nested stack, `HourlyRecordingRules`, from
+`<TemplatesUrl>/hud-hourly-rules.yaml`: the one-stack templates, `observability.yaml`, and `ecs-fargate.yaml` and
+`eks-iam.yaml` when you leave `AmpWorkspaceId` empty. `TemplatesUrl` defaults to the published templates' location;
+change it only to test your own copy. Deleting the stack deletes the rules (the workspace is kept).
+
+For a workspace you bring (`AmpWorkspaceId=<ws-...>`), the templates leave it alone, since it may already have the
+rules. To add them, deploy the template on its own:
+
+```sh
+aws cloudformation deploy --stack-name hud-hourly-rules --template-file deploy/aws/hud-hourly-rules.yaml \
+  --parameter-overrides AmpWorkspaceId=<ws-...>
+```
+
+[Launch in CloudFormation](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhud-cloudformation-templates.s3.amazonaws.com%2Ftemplates%2Fhud-hourly-rules.yaml&stackName=hud-hourly-rules) (template: `deploy/aws/hud-hourly-rules.yaml`)
+
 ## Development
 
 `observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `deploy/scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `deploy/scripts/unify.py --check` and cfn-lint 1.58.0 on every template, and `deploy/scripts/collector-configs.py --validate`: it renders the collector config of `ecs-fargate.yaml` (merge and convert, with and without logs) and of the Helm values (merge and convert), checks their pipelines, and runs `validate` on each in the collector image they pin (needs Docker; without `--validate` it only renders and checks). The published templates are at `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.
+
+Publishing is a manual upload of the changed files to that prefix. The prefix isn't versioned: a parent template
+fetches `hud-hourly-rules.yaml` from `TemplatesUrl` when its stack is created or updated, so upload a changed
+`hud-hourly-rules.yaml` together with (or before) the templates that need it. Existing stacks pick it up on their
+next update.
+
+To test a change to `hud-hourly-rules.yaml`, check its rules with promtool:
+
+```sh
+python3 -c 'import sys; sys.path.insert(0, "deploy/scripts"); import unify; print(unify.load("hud-hourly-rules.yaml")["Resources"]["HourlyRecordingRules"]["Properties"]["Data"], end="")' >/tmp/hud-hourly.rules.yaml
+promtool check rules /tmp/hud-hourly.rules.yaml
+```
+
+Then deploy it on its own to a test workspace (see [Hourly recording rules](#hourly-recording-rules)), or, to test
+it nested, upload it with the parent templates to a prefix of yours and pass that prefix as `TemplatesUrl`
+(`BASE_URL=<prefix> deploy/scripts/quick-create-link.sh` sets both).
 
 The `collector-bump` workflow opens a PR that points the templates and Helm values at a new `ghcr.io/code-hud/hud-otel-collector` tag. hud-otel-collector's release workflow triggers it; you can also run it by hand with the tag.

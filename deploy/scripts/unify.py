@@ -2,9 +2,8 @@
 """Composes the quick-create templates in deploy/aws/ from the Observability Stack's data part
 (parts/observability-data.yaml) and the templates that use it, so they can't drift from the separate ones.
 Every parameter that a data output says to "Pass to the ... as <X>" is replaced by that output's value, and
-conditions on those parameters are resolved. First it embeds opensearch-ui/rules/hud-hourly.rules.yaml as the
-Data of the HourlyRecordingRules resource in the sources that create an AMP workspace. --check fails if a
-committed source or output is stale (run by .github/workflows/cfn-lint.yaml)."""
+conditions on those parameters are resolved. --check fails if a committed output is stale (run by
+.github/workflows/cfn-lint.yaml)."""
 import copy, re, sys
 from pathlib import Path
 
@@ -89,8 +88,6 @@ def refs(x):
 
 
 AWS = Path(__file__).resolve().parent.parent / "aws"
-RULES = AWS.parent.parent / "opensearch-ui/rules/hud-hourly.rules.yaml"
-RULES_IN = ["parts/observability-data.yaml", "ecs-fargate.yaml", "eks-iam.yaml"]
 PROVIDER = "parts/observability-data.yaml"
 # Tag each consumer goes by in the data outputs' "Pass to the <tag> stack" descriptions.
 TAGS = {"ecs-fargate.yaml": "collector", "eks-iam.yaml": "collector", "hud-access.yaml": "access",
@@ -287,25 +284,8 @@ def build(consumers, description, unique_name=False, gates={}):
     return header + yaml.dump(t, Dumper=Dumper, sort_keys=False, width=1000, allow_unicode=True)
 
 
-def embed_rules(name):
-    """The source's text with RULES as its HourlyRecordingRules Data, replacing the literal block in place so
-    comments and formatting elsewhere are kept."""
-    text = (AWS / name).read_text()
-    old = load(name)["Resources"]["HourlyRecordingRules"]["Properties"]["Data"]
-    pad = lambda s: "".join(" " * 8 + l if l.strip() else l for l in s.splitlines(True))
-    assert text.count("      Data: |\n" + pad(old)) == 1, name
-    return text.replace("      Data: |\n" + pad(old), "      Data: |\n" + pad(RULES.read_text()))
-
-
 if __name__ == "__main__":
     stale = []
-    for name in RULES_IN:
-        text = embed_rules(name)
-        if sys.argv[1:] == ["--check"]:
-            if (AWS / name).read_text() != text:
-                stale.append(name)
-        else:
-            (AWS / name).write_text(text)
     for name, spec in OUTPUTS.items():
         text = build(**spec)
         if sys.argv[1:] == ["--check"]:

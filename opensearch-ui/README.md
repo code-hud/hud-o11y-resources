@@ -148,19 +148,7 @@ Differences from Hud's own detection:
 - There is no flow-type selector, so custom and queue flows are included although Hud only runs degradation on endpoint and Kafka entities.
 - `hud-function-day-over-week.rules.yaml` is inert until the `code_function_name` regex (`__NO_FUNCTION_SELECTED__`) is set to the functions you watch. It is expensive: it queries per-function series over 8 days.
 
-### Hourly recording rules
-
-`hud-hourly.rules.yaml` holds recording rules, not alerts: each one records the last hour's increase per service (`job:`), flow (`flow:`), function (`function:`) and instance (`instance:`), so dashboards can sum hourly points instead of scanning raw native-histogram samples over the whole range.
-
-The CloudFormation templates in `deploy/aws/` install it for you as the `hud-hourly` namespace in every AMP workspace they create. If you bring your own workspace (`AmpWorkspaceId` on `ecs-fargate.yaml` or `eks-iam.yaml`), they leave it alone, since it may already have the namespace. In that case, or with a workspace from somewhere else, upload the file yourself:
-
-```bash
-aws amp create-rule-groups-namespace --workspace-id <workspace-id> --name hud-hourly \
-  --data fileb://opensearch-ui/rules/hud-hourly.rules.yaml
-# update: aws amp put-rule-groups-namespace ... (same arguments)
-```
-
-The templates embed a copy of the file. After you edit it, run `python3 deploy/scripts/unify.py` to update them; CI's `unify.py --check` fails if they are out of date.
+The hourly recording rules (`hud-hourly`) are not in this folder: the CloudFormation templates install them, see [Hourly recording rules](../deploy/README.md#hourly-recording-rules).
 
 ## Development
 

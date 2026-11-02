@@ -9,7 +9,7 @@ Metadata:
       - Label: { default: Collector }
         Parameters: [Mode, ExportInterval, Cpu, Memory, CpuArchitecture, DesiredCount, Image]
       - Label: { default: Destination }
-        Parameters: [AmpWorkspaceId, OsisLogsUrl, OsisPipelineName]
+        Parameters: [AmpWorkspaceId, OsisLogsUrl, OsisPipelineName, TemplatesUrl]
       - Label: { default: Discovery }
         Parameters: [DnsNamespace]
 
@@ -67,6 +67,10 @@ Parameters:
     Type: String
     Default: ""
     Description: Your existing AMP workspace id (ws-...). Leave empty to create one.
+  TemplatesUrl:
+    Type: String
+    Default: https://hud-cloudformation-templates.s3.amazonaws.com/templates
+    Description: Where the Hud templates are published (no trailing slash). A workspace this stack creates gets the dashboards' hourly recording rules from hud-hourly-rules.yaml there; change it only to test your own copy.
   OsisLogsUrl:
     Type: String
     Default: ""
@@ -112,86 +116,14 @@ Resources:
     Properties:
       Alias: !Sub ${AWS::StackName}
 
-  # Hourly aggregates for the Hud dashboards, only in a workspace this stack creates (yours may already have them).
+  # Only in a workspace this stack creates: yours may already have the rules (deploy hud-hourly-rules.yaml if not).
   HourlyRecordingRules:
-    Type: AWS::APS::RuleGroupsNamespace
+    Type: AWS::CloudFormation::Stack
     Condition: CreateAmp
     Properties:
-      Name: hud-hourly
-      Workspace: !GetAtt AmpWorkspace.Arn
-      # Embedded from opensearch-ui/rules/hud-hourly.rules.yaml by deploy/scripts/unify.py; edit that file instead.
-      Data: |
-        # Hud hourly aggregates: recording rules for the Hud OpenSearch dashboards (Services, Service Overview).
-        # Each rule records a 1h increase per entity so dashboards sum N hourly points (sum_over_time(...[$range:1h]))
-        # instead of scanning raw native-histogram samples over the whole range.
-        # Labels: deployment_environment_name + job (service), plus code_flow_name/code_flow_type, code_function_name or service_instance_id.
-        # code_flow_duration_seconds and code_function_call_duration_seconds are native histograms; names keep their _seconds unit.
-        groups:
-          - name: hud-hourly-service
-            interval: 60s
-            rules:
-              # Runs: histogram_count of code_flow_duration_seconds.
-              - record: job:code_flow_runs:increase1h
-                expr: sum by (deployment_environment_name, job) (histogram_count(increase(code_flow_duration_seconds[1h])))
-              # Errors: 5xx runs of code_flow_duration_seconds + non-HTTP hud_flow_issues_total (each side 0 when absent).
-              - record: job:code_flow_errors:increase1h
-                expr: |
-                  (sum by (deployment_environment_name, job) (histogram_count(increase(code_flow_duration_seconds{http_response_status_code=~"5.."}[1h]))) or sum by (deployment_environment_name, job) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
-                  + (sum by (deployment_environment_name, job) (increase(hud_flow_issues_total{code_flow_type!="http"}[1h])) or sum by (deployment_environment_name, job) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
-              - record: job:code_flow_duration_seconds_sum:increase1h
-                expr: sum by (deployment_environment_name, job) (histogram_sum(increase(code_flow_duration_seconds[1h])))
-              - record: job:code_flow_duration_seconds:increase1h
-                expr: sum by (deployment_environment_name, job) (increase(code_flow_duration_seconds[1h]))
-              # Names count: distinct code_flow_name with runs (histogram_count of code_flow_duration_seconds) in the hour.
-              - record: job:code_flow_names:count1h
-                expr: count by (deployment_environment_name, job) (sum by (deployment_environment_name, job, code_flow_name) (histogram_count(increase(code_flow_duration_seconds[1h]))) > 0)
-              # Names count: distinct code_function_name with calls (code_function_calls_total) in the hour.
-              - record: job:code_function_names:count1h
-                expr: count by (deployment_environment_name, job) (sum by (deployment_environment_name, job, code_function_name) (increase(code_function_calls_total[1h])) > 0)
-
-          - name: hud-hourly-flow
-            interval: 60s
-            rules:
-              # Runs: histogram_count of code_flow_duration_seconds.
-              - record: flow:code_flow_runs:increase1h
-                expr: sum by (deployment_environment_name, job, code_flow_name, code_flow_type) (histogram_count(increase(code_flow_duration_seconds[1h])))
-              # Errors: 5xx runs of code_flow_duration_seconds + non-HTTP hud_flow_issues_total (each side 0 when absent).
-              - record: flow:code_flow_errors:increase1h
-                expr: |
-                  (sum by (deployment_environment_name, job, code_flow_name, code_flow_type) (histogram_count(increase(code_flow_duration_seconds{http_response_status_code=~"5.."}[1h]))) or sum by (deployment_environment_name, job, code_flow_name, code_flow_type) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
-                  + (sum by (deployment_environment_name, job, code_flow_name, code_flow_type) (increase(hud_flow_issues_total{code_flow_type!="http"}[1h])) or sum by (deployment_environment_name, job, code_flow_name, code_flow_type) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
-              - record: flow:code_flow_duration_seconds_sum:increase1h
-                expr: sum by (deployment_environment_name, job, code_flow_name, code_flow_type) (histogram_sum(increase(code_flow_duration_seconds[1h])))
-              - record: flow:code_flow_duration_seconds:increase1h
-                expr: sum by (deployment_environment_name, job, code_flow_name, code_flow_type) (increase(code_flow_duration_seconds[1h]))
-
-          - name: hud-hourly-function
-            interval: 60s
-            rules:
-              - record: function:code_function_calls:increase1h
-                expr: sum by (deployment_environment_name, job, code_function_name) (increase(code_function_calls_total[1h]))
-              - record: function:code_function_errors:increase1h
-                expr: sum by (deployment_environment_name, job, code_function_name) (increase(code_function_errors_total[1h]))
-              - record: function:code_function_call_duration_seconds_sum:increase1h
-                expr: sum by (deployment_environment_name, job, code_function_name) (histogram_sum(increase(code_function_call_duration_seconds[1h])))
-              - record: function:code_function_call_duration_seconds_count:increase1h
-                expr: sum by (deployment_environment_name, job, code_function_name) (histogram_count(increase(code_function_call_duration_seconds[1h])))
-              - record: function:code_function_call_duration_seconds:increase1h
-                expr: sum by (deployment_environment_name, job, code_function_name) (increase(code_function_call_duration_seconds[1h]))
-
-          - name: hud-hourly-instance
-            interval: 60s
-            rules:
-              # Runs: histogram_count of code_flow_duration_seconds.
-              - record: instance:code_flow_runs:increase1h
-                expr: sum by (deployment_environment_name, job, service_instance_id) (histogram_count(increase(code_flow_duration_seconds[1h])))
-              # Errors: 5xx runs of code_flow_duration_seconds + non-HTTP hud_flow_issues_total (each side 0 when absent).
-              - record: instance:code_flow_errors:increase1h
-                expr: |
-                  (sum by (deployment_environment_name, job, service_instance_id) (histogram_count(increase(code_flow_duration_seconds{http_response_status_code=~"5.."}[1h]))) or sum by (deployment_environment_name, job, service_instance_id) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
-                  + (sum by (deployment_environment_name, job, service_instance_id) (increase(hud_flow_issues_total{code_flow_type!="http"}[1h])) or sum by (deployment_environment_name, job, service_instance_id) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
-              - record: instance:process_uptime_seconds:last_timestamp
-                expr: max by (deployment_environment_name, job, service_instance_id) (timestamp(process_uptime_seconds))
+      TemplateURL: !Sub ${TemplatesUrl}/hud-hourly-rules.yaml
+      Parameters:
+        AmpWorkspaceId: !GetAtt AmpWorkspace.WorkspaceId
 
   LogGroup:
     Type: AWS::Logs::LogGroup
