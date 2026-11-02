@@ -23,7 +23,7 @@ Observability resources for data produced by the Hud SDK. The repository has two
     ├── alternatives.md
     ├── aws/                 # CloudFormation templates and their sources
     ├── helm/                # collector Helm values
-    └── scripts/             # unify.py, collector-configs.py, quick-create-link.sh
+    └── scripts/             # unify.py, collector-configs.py, quick-create-link.sh, publish-templates.sh
 ```
 
 Releases are tagged the same way as the Hud SDK releases. Use the tag that matches the SDK version you run.

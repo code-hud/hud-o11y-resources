@@ -54,5 +54,4 @@ jobs:
             Points the templates and Helm values at `ghcr.io/code-hud/hud-otel-collector:${{ env.TAG }}`.
             `unify.py --check`, cfn-lint and `collector-configs.py --validate` (every rendered config, in the new image) passed in the bump run.
 
-            After merging, upload `deploy/aws/ecs-fargate.yaml` and `deploy/aws/hud-ecs.yaml` to
-            `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.
+            After merging, tag a release: the `publish-templates` workflow publishes the templates for it.
