@@ -90,13 +90,13 @@ def refs(x):
 AWS = Path(__file__).resolve().parent.parent / "aws"
 PROVIDER = "parts/observability-data.yaml"
 # Tag each consumer goes by in the data outputs' "Pass to the <tag> stack" descriptions.
-TAGS = {"ecs-fargate.yaml": "collector", "eks-iam.yaml": "collector", "hud-access.yaml": "access",
+TAGS = {"ecs-fargate.yaml": "collector", "eks-iam.yaml": "collector", "parts/hud-access-stack.yaml": "access",
         "parts/observability-ui.yaml": "UI", "parts/observability-attach.yaml": "attach",
         "parts/collector-platform.yaml": "platform"}
 # Parts that are never deployed on their own, so outputs only for them are always internal.
 INTERNAL = {"UI", "attach", "platform"}
 # What both one-stack templates share: Hud access, and a new OpenSearch UI app unless you name yours (ExistingUiAppId).
-COMMON = ["hud-access.yaml", "parts/observability-ui.yaml", "parts/observability-attach.yaml"]
+COMMON = ["parts/hud-access-stack.yaml", "parts/observability-ui.yaml", "parts/observability-attach.yaml"]
 # Stack-unique names (the first block of the stack id), so they can't clash with a stack you already run.
 UNIQUE_NAME = Tag("!Join", ["-", [Tag("!Ref", "NamePrefix"), Tag("!Select", [0, Tag("!Split", ["-", Tag("!Select", [
     2, Tag("!Split", ["/", Tag("!Ref", "AWS::StackId")])])])])]])

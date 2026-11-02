@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Hud access as a nested stack of hud-access.yaml (source for deploy/scripts/unify.py), so the one-stack templates
+  don't carry a copy of its role.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Hud access }
+        Parameters: [ExternalId]
+
+Parameters:
+  # Same constraints as hud-access.yaml's, so the console rejects a bad value before the nested stack does.
+  ExternalId:
+    Type: String
+    MinLength: 2
+    MaxLength: 1224
+    AllowedPattern: ^[\w+=,.@:/-]+$
+    Description: Prefilled by Hud's onboarding link and unique to you. Don't change it; Hud sends it when assuming the role, so with any other value Hud can't read your data.
+  AmpWorkspaceId:
+    Type: String
+  CollectionName:
+    Type: String
+    Default: ""
+  TemplatesUrl:
+    Type: String
+    Default: https://hud-cloudformation-templates.s3.amazonaws.com/templates
+    Description: Where this stack's nested templates are published (no trailing slash). Each published template points at its own version's folder; change it only to test your own copy.
+
+Resources:
+  HudAccess:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub ${TemplatesUrl}/hud-access.yaml
+      Parameters:
+        ExternalId: !Ref ExternalId
+        AmpWorkspaceId: !Ref AmpWorkspaceId
+        CollectionName: !Ref CollectionName
+
+Outputs:
+  HudRoleArn:
+    Description: Give this to Hud.
+    Value: !GetAtt HudAccess.Outputs.HudRoleArn
+  HudExternalId:
+    Description: The ExternalId Hud generated for you, for reference.
+    Value: !Ref ExternalId

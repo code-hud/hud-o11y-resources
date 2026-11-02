@@ -70,7 +70,7 @@ Parameters:
   TemplatesUrl:
     Type: String
     Default: https://hud-cloudformation-templates.s3.amazonaws.com/templates
-    Description: Where the Hud templates are published (no trailing slash). A workspace this stack creates gets the dashboards' hourly recording rules from hud-hourly-rules.yaml there; change it only to test your own copy.
+    Description: Where this stack's nested templates are published (no trailing slash). Each published template points at its own version's folder; change it only to test your own copy.
   OsisLogsUrl:
     Type: String
     Default: ""

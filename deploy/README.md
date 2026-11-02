@@ -7,6 +7,7 @@ CloudFormation templates and Helm values for the [Hud OpenTelemetry collector](h
 | `deploy/aws/` | CloudFormation templates. `parts/` holds the sources; `observability.yaml`, `hud-ecs.yaml`, and `hud.yaml` are generated from them. |
 | `deploy/helm/` | Helm values for the collector chart: `values.yaml`, and `values-convert.yaml` for convert mode. |
 | `deploy/scripts/unify.py` | Generates the one-stack templates from `deploy/aws/parts/` and the separate templates. |
+| `deploy/scripts/publish-templates.sh` | Publishes every template for a release to the S3 bucket the launch links use. |
 | `deploy/scripts/collector-configs.py` | Renders every collector config the templates and Helm values can produce, and checks it. |
 | `deploy/scripts/quick-create-link.sh` | Prints a new ExternalId and "Launch in CloudFormation" links with it prefilled. |
 | [`deploy/alternatives.md`](alternatives.md) | Deploys that use an Observability Stack or AMP workspace you already have. |
@@ -134,7 +135,8 @@ new app (details in [alternatives](alternatives.md#next-to-your-observability-st
 AMP workspace you already have, see [Deploying with existing resources](alternatives.md).
 
 `observability.yaml`, `hud-ecs.yaml` and `hud.yaml` are generated from the templates in `deploy/aws/parts/`,
-`ecs-fargate.yaml`, `eks-iam.yaml` and `hud-access.yaml`: edit those, then run `deploy/scripts/unify.py`.
+`ecs-fargate.yaml` and `eks-iam.yaml`: edit those, then run `deploy/scripts/unify.py`. They install
+`hud-access.yaml` and `hud-hourly-rules.yaml` as nested stacks (see [Publishing](#publishing)).
 
 ## EKS role on its own
 
@@ -155,7 +157,7 @@ To give Hud access, deploy `deploy/aws/hud-access.yaml` with the stack's `AmpWor
 ## Hud access
 
 Hud reads your data from its own AWS account (`736129612463`) by assuming a role in yours. Both one-stack templates
-create it; for other setups, deploy `deploy/aws/hud-access.yaml` on its own
+create it, by installing `deploy/aws/hud-access.yaml` as a nested stack (`HudAccess`); for other setups, deploy `deploy/aws/hud-access.yaml` on its own
 ([alternatives](alternatives.md#hud-access-on-its-own)).
 
 The role trusts Hud's account, and only with the `ExternalId` Hud generated for you (prefilled in your launch
@@ -195,8 +197,8 @@ can sum hourly points instead of scanning raw samples. It is the only place thes
 
 Every template that creates an AMP workspace installs it as a nested stack, `HourlyRecordingRules`, from
 `<TemplatesUrl>/hud-hourly-rules.yaml`: the one-stack templates, `observability.yaml`, and `ecs-fargate.yaml` and
-`eks-iam.yaml` when you leave `AmpWorkspaceId` empty. `TemplatesUrl` defaults to the published templates' location;
-change it only to test your own copy. Deleting the stack deletes the rules (the workspace is kept).
+`eks-iam.yaml` when you leave `AmpWorkspaceId` empty. `TemplatesUrl` defaults to the folder the template was
+published in (see [Publishing](#publishing)); change it only to test your own copy. Deleting the stack deletes the rules (the workspace is kept).
 
 For a workspace you bring (`AmpWorkspaceId=<ws-...>`), the templates leave it alone, since it may already have the
 rules. To add them, deploy the template on its own:
@@ -210,12 +212,28 @@ aws cloudformation deploy --stack-name hud-hourly-rules --template-file deploy/a
 
 ## Development
 
-`observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `deploy/scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `deploy/scripts/unify.py --check` and cfn-lint 1.58.0 on every template, and `deploy/scripts/collector-configs.py --validate`: it renders the collector config of `ecs-fargate.yaml` (merge and convert, with and without logs) and of the Helm values (merge and convert), checks their pipelines, and runs `validate` on each in the collector image they pin (needs Docker; without `--validate` it only renders and checks). The published templates are at `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`.
+`observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `deploy/scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `deploy/scripts/unify.py --check` and cfn-lint 1.58.0 on every template, and `deploy/scripts/collector-configs.py --validate`: it renders the collector config of `ecs-fargate.yaml` (merge and convert, with and without logs) and of the Helm values (merge and convert), checks their pipelines, and runs `validate` on each in the collector image they pin (needs Docker; without `--validate` it only renders and checks). 
+### Publishing
 
-Publishing is a manual upload of the changed files to that prefix. The prefix isn't versioned: a parent template
-fetches `hud-hourly-rules.yaml` from `TemplatesUrl` when its stack is created or updated, so upload a changed
-`hud-hourly-rules.yaml` together with (or before) the templates that need it. Existing stacks pick it up on their
-next update.
+The templates are published to `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`, one folder per
+release (`templates/<version>/`), plus the latest release at `templates/` itself, which the launch links in these
+docs use. The version is the release tag. Pushing a tag runs the `publish-templates` workflow, which runs cfn-lint
+and `deploy/scripts/publish-templates.sh <tag>` (you can also run the workflow by hand with a tag). It needs the
+`TEMPLATES_PUBLISH_ROLE_ARN` repository variable; see the workflow file.
+
+`publish-templates.sh` checks that the generated templates are up to date, then uploads every `deploy/aws/*.yaml` to
+`templates/<version>/` and then to `templates/`. In each copy it sets the `TemplatesUrl` default to
+`templates/<version>`, so a parent always nests the `hud-access.yaml` and `hud-hourly-rules.yaml` published with it,
+even when you launch it from `templates/`. It doesn't overwrite a published version unless you set `FORCE=1`, and
+`LATEST=0` leaves `templates/` alone. `--dryrun` only renders the files (into `OUT`, a temp dir by default) and
+prints the uploads:
+
+```sh
+deploy/scripts/publish-templates.sh --dryrun 1.2.3
+```
+
+`VERSION=<tag> deploy/scripts/quick-create-link.sh` prints launch links for a published release. In the repository
+the `TemplatesUrl` default is `templates/`, so a stack you deploy from a checkout nests the latest release's children.
 
 To test a change to `hud-hourly-rules.yaml`, check its rules with promtool:
 
@@ -224,8 +242,9 @@ python3 -c 'import sys; sys.path.insert(0, "deploy/scripts"); import unify; prin
 promtool check rules /tmp/hud-hourly.rules.yaml
 ```
 
-Then deploy it on its own to a test workspace (see [Hourly recording rules](#hourly-recording-rules)), or, to test
-it nested, upload it with the parent templates to a prefix of yours and pass that prefix as `TemplatesUrl`
-(`BASE_URL=<prefix> deploy/scripts/quick-create-link.sh` sets both).
+Then deploy it on its own to a test workspace (see [Hourly recording rules](#hourly-recording-rules)). To test a
+change to any nested template in place, publish to a bucket of yours (`BUCKET=<bucket> LATEST=0
+deploy/scripts/publish-templates.sh test-1`) and launch from it
+(`BASE_URL=https://<bucket>.s3.amazonaws.com/templates/test-1 deploy/scripts/quick-create-link.sh`).
 
 The `collector-bump` workflow opens a PR that points the templates and Helm values at a new `ghcr.io/code-hud/hud-otel-collector` tag. hud-otel-collector's release workflow triggers it; you can also run it by hand with the tag.

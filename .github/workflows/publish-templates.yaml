@@ -1,0 +1,42 @@
+name: publish-templates
+
+# Publishes deploy/aws/*.yaml with deploy/scripts/publish-templates.sh: to templates/<version>/ in the
+# hud-cloudformation-templates bucket and to its flat templates/ prefix. Runs on a release tag (the version is the
+# tag), or by hand with the version (a tag or branch to check out).
+# Needs the repository variable TEMPLATES_PUBLISH_ROLE_ARN: an IAM role this workflow assumes with GitHub OIDC, with
+# s3:PutObject and s3:GetObject on hud-cloudformation-templates/templates/* and s3:ListBucket on the bucket.
+on:
+  push:
+    tags: ["*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish, e.g. 1.2.3
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency: publish-templates
+
+jobs:
+  publish:
+    if: vars.TEMPLATES_PUBLISH_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.version || github.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install cfn-lint==1.58.0
+      - run: cfn-lint deploy/aws/*.yaml deploy/aws/parts/*.yaml
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.TEMPLATES_PUBLISH_ROLE_ARN }}
+          aws-region: us-east-1
+      - run: deploy/scripts/publish-templates.sh "$VERSION"
