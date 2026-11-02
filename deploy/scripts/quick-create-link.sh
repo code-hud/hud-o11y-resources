@@ -17,6 +17,8 @@ ID=${1:-$( (uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid) | tr 'A-Z' 
 enc() { local s=${1//%/%25}; s=${s//:/%3A}; s=${s//\//%2F}; s=${s//+/%2B}; s=${s//=/%3D}; s=${s//,/%2C}; s=${s//@/%40}; echo "$s"; }
 
 echo "ExternalId: $ID"
+# With another BASE_URL (e.g. a test copy), the nested hud-hourly-rules.yaml comes from there too.
+[[ $BASE_URL == https://hud-cloudformation-templates.s3.amazonaws.com/templates ]] || EXTRA="&param_TemplatesUrl=$(enc "$BASE_URL")"
 for t in hud-ecs.yaml hud.yaml; do
-  echo "$t: https://$REGION.console.aws.amazon.com/cloudformation/home?region=$REGION#/stacks/quickcreate?templateURL=$(enc "$BASE_URL/$t")&stackName=$STACK_NAME&param_ExternalId=$(enc "$ID")"
+  echo "$t: https://$REGION.console.aws.amazon.com/cloudformation/home?region=$REGION#/stacks/quickcreate?templateURL=$(enc "$BASE_URL/$t")&stackName=$STACK_NAME&param_ExternalId=$(enc "$ID")${EXTRA:-}"
 done

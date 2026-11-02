@@ -11,6 +11,7 @@ Metadata:
       - MinUnits
       - MaxUnits
       - ServiceMapWindow
+      - TemplatesUrl
       - DataWritePrincipals
     - Label:
         default: Your collector
@@ -48,6 +49,10 @@ Parameters:
   ServiceMapWindow:
     Type: String
     Default: 30s
+  TemplatesUrl:
+    Type: String
+    Default: https://hud-cloudformation-templates.s3.amazonaws.com/templates
+    Description: Where the Hud templates are published (no trailing slash). The stack installs the dashboards' hourly recording rules from hud-hourly-rules.yaml there; change it only to test your own copy.
   DataWritePrincipals:
     Type: String
     Default: ''
@@ -243,6 +248,12 @@ Resources:
               - !Split
                 - /
                 - !Ref 'AWS::StackId'
+  HourlyRecordingRules:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub '${TemplatesUrl}/hud-hourly-rules.yaml'
+      Parameters:
+        AmpWorkspaceId: !GetAtt 'Workspace.WorkspaceId'
   PipelineRole:
     Type: AWS::IAM::Role
     Properties:

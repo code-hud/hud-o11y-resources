@@ -148,6 +148,8 @@ Differences from Hud's own detection:
 - There is no flow-type selector, so custom and queue flows are included although Hud only runs degradation on endpoint and Kafka entities.
 - `hud-function-day-over-week.rules.yaml` is inert until the `code_function_name` regex (`__NO_FUNCTION_SELECTED__`) is set to the functions you watch. It is expensive: it queries per-function series over 8 days.
 
+The hourly recording rules (`hud-hourly`) are not in this folder: the CloudFormation templates install them, see [Hourly recording rules](../deploy/README.md#hourly-recording-rules).
+
 ## Development
 
 `python3 -m unittest discover -s opensearch-ui/tests` runs the loader's tests against the dashboards in `opensearch-ui/dashboards/`.

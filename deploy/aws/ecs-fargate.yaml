@@ -9,7 +9,7 @@ Metadata:
       - Label: { default: Collector }
         Parameters: [Mode, ExportInterval, Cpu, Memory, CpuArchitecture, DesiredCount, Image]
       - Label: { default: Destination }
-        Parameters: [AmpWorkspaceId, OsisLogsUrl, OsisPipelineName]
+        Parameters: [AmpWorkspaceId, OsisLogsUrl, OsisPipelineName, TemplatesUrl]
       - Label: { default: Discovery }
         Parameters: [DnsNamespace]
 
@@ -67,6 +67,10 @@ Parameters:
     Type: String
     Default: ""
     Description: Your existing AMP workspace id (ws-...). Leave empty to create one.
+  TemplatesUrl:
+    Type: String
+    Default: https://hud-cloudformation-templates.s3.amazonaws.com/templates
+    Description: Where the Hud templates are published (no trailing slash). A workspace this stack creates gets the dashboards' hourly recording rules from hud-hourly-rules.yaml there; change it only to test your own copy.
   OsisLogsUrl:
     Type: String
     Default: ""
@@ -111,6 +115,15 @@ Resources:
     Condition: CreateAmp
     Properties:
       Alias: !Sub ${AWS::StackName}
+
+  # Only in a workspace this stack creates: yours may already have the rules (deploy hud-hourly-rules.yaml if not).
+  HourlyRecordingRules:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateAmp
+    Properties:
+      TemplateURL: !Sub ${TemplatesUrl}/hud-hourly-rules.yaml
+      Parameters:
+        AmpWorkspaceId: !GetAtt AmpWorkspace.WorkspaceId
 
   LogGroup:
     Type: AWS::Logs::LogGroup
