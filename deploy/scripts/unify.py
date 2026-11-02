@@ -212,7 +212,9 @@ def build(consumers, description, unique_name=False, gates={}):
     resources = walk(resources, rewrite)
     assert not set(data["Resources"]) & set(resources), set(data["Resources"]) & set(resources)
 
-    outputs = walk(used_by["Outputs"], rewrite)
+    outputs = {k: {a: b for a, b in v.items() if not (a == "Condition" and b in fixed)}
+               for k, v in used_by["Outputs"].items() if fixed.get(v.get("Condition"), True)}
+    outputs = walk(outputs, rewrite)
     for o in outputs.values():
         m = re.search(r"Pass to the (.+?) stacks? (?:\(.*?\) )?as (\w+)\.", o.get("Description", ""))
         if m and set(re.split(r", | and ", m.group(1))) <= included:

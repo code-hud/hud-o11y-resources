@@ -1,0 +1,144 @@
+# A small Express app instrumented with the Hud Node SDK (OTLP mode, sending to the collector), plus a load generator.
+# kubectl apply -f deploy/dev/eks-sandbox/sample-app.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shop-api
+  namespace: shop
+data:
+  package.json: |
+    { "name": "shop-api", "private": true, "dependencies": { "express": "4.21.2", "hud-sdk": "1.12.0" } }
+  server.js: |
+    const express = require("express");
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    function priceFor(id) {
+      return Math.round((10 + (id % 50)) * 100) / 100;
+    }
+    function getProduct(id) {
+      if (id > 190) return null;
+      return { id, name: `product-${id}`, price: priceFor(id) };
+    }
+    async function chargeCard(total) {
+      await sleep(5 + Math.random() * 20);
+      if (Math.random() < 0.05) throw new Error(`card declined for ${total}`);
+      return { charged: total };
+    }
+    async function placeOrder(items) {
+      const total = items.reduce((s, i) => s + priceFor(i.productId) * i.quantity, 0);
+      if (Math.random() < 0.03) await sleep(300); // slower than HUD_OTLP_DURATION_THRESHOLD_MS: a duration investigation
+      return chargeCard(total);
+    }
+
+    const app = express();
+    app.use(express.json());
+    app.get("/healthz", (req, res) => res.send("ok"));
+    app.get("/api/products/:id", (req, res) => {
+      const p = getProduct(Number(req.params.id));
+      p ? res.json(p) : res.status(404).json({ error: "not found" });
+    });
+    app.post("/api/checkout", async (req, res, next) => {
+      try {
+        res.json(await placeOrder(req.body.items || []));
+      } catch (err) {
+        next(err);
+      }
+    });
+    app.listen(8080, () => console.log("shop-api on :8080"));
+  loadgen.js: |
+    const BASE = "http://shop-api.shop:8080";
+    const pick = (n) => 1 + Math.floor(Math.random() * n);
+    async function worker() {
+      for (;;) {
+        const checkout = Math.random() < 0.4;
+        const init = checkout
+          ? { method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ items: [{ productId: pick(200), quantity: pick(2) }] }) }
+          : undefined;
+        try {
+          await (await fetch(BASE + (checkout ? "/api/checkout" : `/api/products/${pick(200)}`), init)).arrayBuffer();
+        } catch {
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    console.log(`loadgen -> ${BASE}`);
+    for (let i = 0; i < 4; i++) worker();
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-api
+  namespace: shop
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: shop-api } }
+  template:
+    metadata:
+      labels: { app: shop-api }
+    spec:
+      # ponytail: installs from npm at start instead of building an image; fine for a sandbox.
+      initContainers:
+        - name: npm-install
+          image: node:22-alpine
+          workingDir: /app
+          command: [sh, -c, "cp /src/* /app/ && npm install --omit=dev --no-audit --no-fund"]
+          volumeMounts:
+            - { name: src, mountPath: /src }
+            - { name: app, mountPath: /app }
+      containers:
+        - name: shop-api
+          image: node:22-alpine
+          workingDir: /app
+          command: [node, -r, hud-sdk/init, server.js]
+          env:
+            - { name: HUD_ENABLE, value: "true" }
+            - { name: HUD_KEY, value: "otlp-sandbox" }
+            - { name: HUD_SERVICE, value: shop-api }
+            - { name: HUD_EXPORTER, value: otlp }
+            - { name: HUD_OTLP_ENDPOINT, value: "http://hud-collector.hud:4318" }
+            - { name: HUD_OTLP_DURATION_THRESHOLD_MS, value: "200" }
+            - { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment.name=eks-sandbox" }
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 512Mi } }
+          volumeMounts: [{ name: app, mountPath: /app }]
+      volumes:
+        - { name: src, configMap: { name: shop-api } }
+        - { name: app, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop-api
+  namespace: shop
+spec:
+  selector: { app: shop-api }
+  ports: [{ port: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: shop
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: loadgen } }
+  template:
+    metadata:
+      labels: { app: loadgen }
+    spec:
+      containers:
+        - name: loadgen
+          image: node:22-alpine
+          command: [node, /src/loadgen.js]
+          resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 128Mi } }
+          volumeMounts: [{ name: src, mountPath: /src }]
+      volumes:
+        - { name: src, configMap: { name: shop-api } }

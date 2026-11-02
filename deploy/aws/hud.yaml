@@ -576,6 +576,26 @@ Resources:
           - Effect: Allow
             Action: aps:RemoteWrite
             Resource: !Sub 'arn:${AWS::Partition}:aps:${AWS::Region}:${AWS::AccountId}:workspace/${Workspace.WorkspaceId}'
+      - PolicyName: osis-ingest
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: osis:Ingest
+            Resource: !Sub
+            - arn:${AWS::Partition}:osis:${AWS::Region}:${AWS::AccountId}:pipeline/${Name}
+            - Name: !Join
+              - '-'
+              - - !Ref 'NamePrefix'
+                - !Select
+                  - 0
+                  - !Split
+                    - '-'
+                    - !Select
+                      - 2
+                      - !Split
+                        - /
+                        - !Ref 'AWS::StackId'
   PodIdentityAssociation:
     Condition: EksPodIdentity
     Type: AWS::EKS::PodIdentityAssociation
@@ -1011,6 +1031,25 @@ Outputs:
     Value: !Sub
     - https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${Ws}/api/v1/remote_write
     - Ws: !GetAtt 'Workspace.WorkspaceId'
+  OsisLogsUrl:
+    Description: Pass to Helm as OSIS_LOGS_URL.
+    Value: !Sub
+    - https://${Host}/${Name}/v1/logs
+    - Host: !Select
+      - 0
+      - !GetAtt 'Pipeline.IngestEndpointUrls'
+      Name: !Join
+      - '-'
+      - - !Ref 'NamePrefix'
+        - !Select
+          - 0
+          - !Split
+            - '-'
+            - !Select
+              - 2
+              - !Split
+                - /
+                - !Ref 'AWS::StackId'
   AmpWorkspaceId:
     Value: !GetAtt 'Workspace.WorkspaceId'
   AmpQueryUrl:
