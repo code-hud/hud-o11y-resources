@@ -1,4 +1,6 @@
 # A small Express app instrumented with the Hud Node SDK (OTLP mode, sending to the collector), plus a load generator.
+# kubectl create namespace shop
+# kubectl -n shop create secret generic hud-key --from-literal=HUD_KEY=<your Hud API key>
 # kubectl apply -f deploy/dev/eks-sandbox/sample-app.yaml
 apiVersion: v1
 kind: Namespace
@@ -31,7 +33,7 @@ data:
     }
     async function placeOrder(items) {
       const total = items.reduce((s, i) => s + priceFor(i.productId) * i.quantity, 0);
-      if (Math.random() < 0.03) await sleep(300); // slower than HUD_OTLP_DURATION_THRESHOLD_MS: a duration investigation
+      if (Math.random() < 0.03) await sleep(300);
       return chargeCard(total);
     }
 
@@ -99,11 +101,13 @@ spec:
           command: [node, -r, hud-sdk/init, server.js]
           env:
             - { name: HUD_ENABLE, value: "true" }
-            - { name: HUD_KEY, value: "otlp-sandbox" }
+            # The SDK checks the key with Hud even in OTLP mode.
+            - { name: HUD_KEY, valueFrom: { secretKeyRef: { name: hud-key, key: HUD_KEY } } }
             - { name: HUD_SERVICE, value: shop-api }
             - { name: HUD_EXPORTER, value: otlp }
             - { name: HUD_OTLP_ENDPOINT, value: "http://hud-collector.hud:4318" }
-            - { name: HUD_OTLP_DURATION_THRESHOLD_MS, value: "200" }
+            # Investigations (sent as OTLP logs) are off unless this or Hud's remote config turns them on.
+            - { name: HUD_ENABLE_INVESTIGATION, value: "true" }
             - { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment.name=eks-sandbox" }
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /healthz, port: 8080 } }

@@ -8,6 +8,9 @@ STACK=${STACK:-hud-eks-sandbox}
 HERE=$(dirname "$0")
 
 [[ $(aws sts get-caller-identity --query Account --output text) == 529601496549 ]] || { echo "not the sandbox account" >&2; exit 1; }
+# A kubeconfig of its own, so your current kubectl context stays as it is.
+export KUBECONFIG=$(mktemp)
+trap 'rm -f "$KUBECONFIG"' EXIT
 aws eks update-kubeconfig --name hud-eks-sandbox >/dev/null
 
 kubectl delete -f "$HERE/sample-app.yaml" --ignore-not-found

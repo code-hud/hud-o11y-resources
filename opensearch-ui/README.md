@@ -63,6 +63,7 @@ python3 opensearch-ui/scripts/dashboard-loader.py --target osd \
 | `--prometheus-connection` | The name of the Prometheus data connection from step 1. Omit it if you used the name the dashboards already have. | **Data sources** > **Data connections** |
 | `--prometheus-arn` | The ARN of the Prometheus data connection. Required for OpenSearch UI. Not used for OpenSearch Dashboards. | `aws opensearch get-direct-query-data-source --data-source-name <connection name>`, or build it as `arn:aws:opensearch:<region>:<account>:datasource/<connection name>` |
 | `--logs-index-pattern` | The index pattern of the Hud logs, if it is not `logs-otel-v1*`. | Your log pipeline's index settings |
+| `--logs-layout` | `otel` if your pipeline keeps log attributes nested (`attributes.hud.forensic.type`), as the Hud CloudFormation stacks' does. The default, `opensearch`, is Data Prepper's flattened layout (`log.attributes.hud@forensic@type`). | Your pipeline's `output_format`: the `otlp` source defaults to `otel`, `otel_logs_source` to `opensearch` |
 | `--out` | The output directory (default `out/`). | |
 | (arguments) | The files or directories to read, instead of `opensearch-ui/dashboards/`. | |
 

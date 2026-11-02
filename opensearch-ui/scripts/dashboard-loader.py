@@ -332,6 +332,20 @@ def rewrite_index_pattern(objs, mapping):
         walk(o, visit)
 
 
+# Data Prepper's "opensearch" log layout flattens attributes into `log.attributes.<key with @ for .>`; its "otel" layout
+# (the otlp source's default, used by the Hud CloudFormation stacks) keeps them nested: `attributes.<key>`.
+OPENSEARCH_LAYOUT_FIELD = re.compile(r"\b(log\.attributes|resource\.attributes)\.([\w@]+)")
+
+
+def otel_layout(objs):
+    def fn(s):
+        return OPENSEARCH_LAYOUT_FIELD.sub(
+            lambda m: ("attributes" if m.group(1) == "log.attributes" else m.group(1)) + "." + m.group(2).replace("@", "."), s)
+
+    for o in objs:
+        map_strings(o, fn)
+
+
 def opensearch_data_sources(objs):
     found = set()
     for o in objs:
@@ -572,6 +586,9 @@ def main(argv=None):
                          "(required for opensearch-ui when the export carries one; dropped for osd unless given)")
     ap.add_argument("--logs-index-pattern", action="append", metavar="[OLD=]NEW",
                     help="index pattern of the Hud logs, e.g. 'otel-logs-*' (default: keep)")
+    ap.add_argument("--logs-layout", choices=["opensearch", "otel"], default="opensearch",
+                    help="field layout of the Hud logs, Data Prepper's output_format: opensearch (default, "
+                         "log.attributes.<key with @>) or otel (attributes.<key>, the Hud CloudFormation stacks)")
     ver = ap.add_argument_group("target version (decides how '$__all' dashboard links are written)")
     ver.add_argument("--osd-version", help="OpenSearch Dashboards version, e.g. 3.9.0")
     ver.add_argument("--osd-url", help="read the version from <url>/api/status")
@@ -658,6 +675,9 @@ def main(argv=None):
         rewrite_prometheus_arn(objs, args.prometheus_arn)
         report.note(f"Prometheus ARN: {', '.join(sorted(arn_found))} -> {args.prometheus_arn or 'removed'}")
     rewrite_index_pattern(objs, ip_map)
+    if args.logs_layout == "otel":
+        otel_layout(objs)
+        report.note("logs layout: opensearch -> otel")
     if ds_found:
         rewrite_data_source(objs, args.opensearch_data_source_id, args.opensearch_data_source_title,
                             remove=not args.opensearch_data_source_id)

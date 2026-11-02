@@ -105,8 +105,16 @@ source (PromQL), and investigations in its logs, for anyone in your account (see
 
 With `CollectorPlatform=EKS` the stack also creates the collector's IAM role, linked to the `hud/hud-collector`
 service account with EKS Pod Identity (default) or IRSA (`AuthMode=IRSA OidcProvider=<issuer without https://>`).
-The EKS fields are grouped as "EKS only"; with `None`, leave `ClusterName` empty (a rule enforces it). Then install
-the official chart with `deploy/helm/values.yaml`:
+Pod Identity needs the `eks-pod-identity-agent` add-on on your cluster (built into EKS Auto Mode):
+
+```sh
+aws eks create-addon --cluster-name <cluster> --addon-name eks-pod-identity-agent
+```
+
+The EKS fields are grouped as "EKS only"; fill in `ClusterName` (the launch link leaves it empty). With `None`,
+leave it empty (a rule enforces it). The role can write metrics to the stack's AMP workspace (`aps:RemoteWrite`) and
+investigations to its pipeline (`osis:Ingest`). Then install the official chart with `deploy/helm/values.yaml`,
+passing the stack's `AmpRemoteWriteUrl` and `OsisLogsUrl` outputs:
 
 ```sh
 aws cloudformation deploy --stack-name hud --template-file deploy/aws/hud.yaml \
@@ -114,14 +122,19 @@ aws cloudformation deploy --stack-name hud --template-file deploy/aws/hud.yaml \
   CollectorPlatform=EKS ClusterName=<cluster> ExternalId=<external id from Hud>
 helm install hud opentelemetry-collector --repo https://open-telemetry.github.io/opentelemetry-helm-charts \
   -n hud --create-namespace -f deploy/helm/values.yaml \
-  --set-string extraEnvs[0].value=<AmpRemoteWriteUrl output>,extraEnvs[1].value=<region>
+  --set-string 'extraEnvs[0].value=<AmpRemoteWriteUrl output>,extraEnvs[1].value=<region>,extraEnvs[2].value=<OsisLogsUrl output>'
 ```
 
 [Launch in CloudFormation](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhud-cloudformation-templates.s3.amazonaws.com%2Ftemplates%2Fhud.yaml&stackName=hud) (template: `deploy/aws/hud.yaml`)
 
-Add `-f deploy/helm/values-convert.yaml` for `convert` mode. With IRSA, also set the service account's
-`eks.amazonaws.com/role-arn` annotation to the `RoleArn` output. Your apps send to `http://hud-collector.hud:4318`.
-On EKS only metrics are sent; investigations aren't sent to OpenSearch yet.
+Keep the quotes around `--set-string`'s value: zsh, the macOS default shell, otherwise reads `[0]` as a file
+pattern. Add `-f deploy/helm/values-convert.yaml` for `convert` mode. With IRSA, also set the service account's
+`eks.amazonaws.com/role-arn` annotation to the `RoleArn` output.
+
+**Your apps.** Set `HUD_EXPORTER=otlp` and `HUD_OTLP_ENDPOINT=http://hud-collector.hud:4318` in your apps, next to
+your usual `HUD_KEY` and `HUD_SERVICE`: the SDK still checks the key with Hud when it starts. Metrics show up in the
+OpenSearch UI (`DashboardUrl` output) through its AMP data source (PromQL), and investigations in its logs. To add
+the Hud dashboards, see [Hud dashboards](#hud-dashboards).
 
 With `CollectorPlatform=None`, nothing is created for the collector. Point yours at the `AmpRemoteWriteUrl`
 output (metrics, SigV4 service `aps`) and the `OtlpEndpoint` output plus `/v1/logs` (investigations, SigV4
@@ -141,13 +154,17 @@ AMP workspace you already have, see [Deploying with existing resources](alternat
 ## EKS role on its own
 
 `deploy/aws/eks-iam.yaml` creates only the collector's IAM role (and an AMP workspace unless you pass
-`AmpWorkspaceId=<ws-...>`), for when the rest is already in place. Install the chart as above with its
-`AmpRemoteWriteUrl` output:
+`AmpWorkspaceId=<ws-...>`), for when the rest is already in place. To send investigations, pass your pipeline's
+logs URL and name (`OsisLogsUrl` and `OsisPipelineName`; the role then gets `osis:Ingest` on it). Install the chart
+as above with its `AmpRemoteWriteUrl` and `OsisLogsUrl` outputs:
 
 ```sh
 aws cloudformation deploy --stack-name hud-collector-iam --template-file deploy/aws/eks-iam.yaml \
-  --capabilities CAPABILITY_IAM --parameter-overrides ClusterName=<cluster>
+  --capabilities CAPABILITY_IAM --parameter-overrides ClusterName=<cluster> \
+  OsisLogsUrl=https://<pipeline endpoint>/<pipeline name>/v1/logs OsisPipelineName=<pipeline name>
 ```
+
+The Helm values always send investigations, so they need a pipeline.
 
 [Launch in CloudFormation](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhud-cloudformation-templates.s3.amazonaws.com%2Ftemplates%2Feks-iam.yaml&stackName=hud-collector-iam) (template: `deploy/aws/eks-iam.yaml`)
 
@@ -189,6 +206,22 @@ Deployed an earlier version? Its policy gave your account root read and write. U
 in your account read-only; what the OpenSearch UI shows doesn't change. If something of yours writes to the
 collection, pass its role in `DataWritePrincipals` in the same update.
 
+## Hud dashboards
+
+The stack sets up the OpenSearch UI workspace and its data sources, but doesn't import the Hud dashboards. Import
+them as in [`opensearch-ui/README.md`](../opensearch-ui/README.md#install-the-dashboards), skipping its step 1. For
+step 2, use these values:
+- `--workspace-id`: the part after `/w/` in the `DashboardUrl` output;
+- `--opensearch-data-source-id`: in the workspace, **Data sources**, the one named after the `CollectionName` output;
+- `--prometheus-connection` and `--prometheus-arn`: `<CollectionName with - replaced by _>_prometheus`, e.g.
+  `hud_1a2b3c4d_prometheus`, and `arn:aws:opensearch:<region>:<account>:datasource/<that name>`;
+- `--logs-index-pattern 'hud-investigations-v1*' --logs-layout otel`: where and how the stack's pipeline stores
+  investigations.
+
+The metrics panels work as soon as your apps send data; the week-over-week ones need a week of it. The
+investigation panels don't work on the stack's OpenSearch Serverless collection yet: they use PPL functions
+(`json_extract`, `spath`) that Serverless doesn't support, so they show a query error.
+
 ## Hourly recording rules
 
 `deploy/aws/hud-hourly-rules.yaml` creates the `hud-hourly` rule namespace in an AMP workspace: recording rules
@@ -212,7 +245,7 @@ aws cloudformation deploy --stack-name hud-hourly-rules --template-file deploy/a
 
 ## Development
 
-`observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `deploy/scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `deploy/scripts/unify.py --check` and cfn-lint 1.58.0 on every template, and `deploy/scripts/collector-configs.py --validate`: it renders the collector config of `ecs-fargate.yaml` (merge and convert, with and without logs) and of the Helm values (merge and convert), checks their pipelines, and runs `validate` on each in the collector image they pin (needs Docker; without `--validate` it only renders and checks). 
+`observability.yaml`, `hud-ecs.yaml` and `hud.yaml` in `deploy/aws/` are generated: edit the sources and run `deploy/scripts/unify.py` (needs PyYAML). The `cfn-lint` workflow runs `deploy/scripts/unify.py --check` and cfn-lint 1.58.0 on every template, and `deploy/scripts/collector-configs.py --validate`: it renders the collector config of `ecs-fargate.yaml` (merge and convert, with and without logs) and of the Helm values (merge and convert, both with logs), checks their pipelines, and runs `validate` on each in the collector image they pin (needs Docker; without `--validate` it only renders and checks). 
 ### Publishing
 
 The templates are published to `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`, one folder per
@@ -221,7 +254,7 @@ docs use. The version is the release tag. Pushing a tag runs the `publish-templa
 and `deploy/scripts/publish-templates.sh <tag>` (you can also run the workflow by hand with a tag). It needs the
 `TEMPLATES_PUBLISH_ROLE_ARN` repository variable; see the workflow file.
 
-`publish-templates.sh` checks that the generated templates are up to date, then uploads every `deploy/aws/*.yaml` to
+`publish-templates.sh` (needs PyYAML) checks that the generated templates are up to date, then uploads every `deploy/aws/*.yaml` to
 `templates/<version>/` and then to `templates/`. In each copy it sets the `TemplatesUrl` default to
 `templates/<version>`, so a parent always nests the `hud-access.yaml` and `hud-hourly-rules.yaml` published with it,
 even when you launch it from `templates/`. It doesn't overwrite a published version unless you set `FORCE=1`, and
