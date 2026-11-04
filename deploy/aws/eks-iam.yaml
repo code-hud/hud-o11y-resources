@@ -5,7 +5,7 @@ Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: EKS only - the collector's IAM role }
-        Parameters: [ClusterName, AuthMode, OidcProvider, Namespace, ServiceAccount, AmpWorkspaceId, TemplatesUrl]
+        Parameters: [ClusterName, AuthMode, OidcProvider, Namespace, ServiceAccount, AmpWorkspaceId, OsisLogsUrl, OsisPipelineName, TemplatesUrl]
 
 Parameters:
   ClusterName:
@@ -30,6 +30,14 @@ Parameters:
     Type: String
     Default: ""
     Description: Your existing AMP workspace id (ws-...). Leave empty to create one.
+  OsisLogsUrl:
+    Type: String
+    Default: ""
+    Description: Optional. Full OTLP logs URL of your OpenSearch Ingestion pipeline, e.g. https://<pipeline>.us-east-1.osis.amazonaws.com/<pipeline-name>/v1/logs. Lets the collector send Hud investigations to OpenSearch.
+  OsisPipelineName:
+    Type: String
+    Default: ""
+    Description: Name of that pipeline (required with OsisLogsUrl), for osis:Ingest.
   TemplatesUrl:
     Type: String
     Default: https://hud-cloudformation-templates.s3.amazonaws.com/templates
@@ -41,10 +49,16 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref OidcProvider, ""]]
         AssertDescription: OidcProvider is required when AuthMode is IRSA.
+  OsisNeedsPipelineName:
+    RuleCondition: !Not [!Equals [!Ref OsisLogsUrl, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref OsisPipelineName, ""]]
+        AssertDescription: OsisPipelineName is required when OsisLogsUrl is set.
 
 Conditions:
   CreateAmp: !Equals [!Ref AmpWorkspaceId, ""]
   PodIdentity: !Equals [!Ref AuthMode, PodIdentity]
+  Logs: !Not [!Equals [!Ref OsisLogsUrl, ""]]
 
 Resources:
   AmpWorkspace:
@@ -97,6 +111,16 @@ Resources:
                   - CreateAmp
                   - !GetAtt AmpWorkspace.Arn
                   - !Sub arn:${AWS::Partition}:aps:${AWS::Region}:${AWS::AccountId}:workspace/${AmpWorkspaceId}
+        - !If
+          - Logs
+          - PolicyName: osis-ingest
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: osis:Ingest
+                  Resource: !Sub arn:${AWS::Partition}:osis:${AWS::Region}:${AWS::AccountId}:pipeline/${OsisPipelineName}
+          - !Ref AWS::NoValue
 
   PodIdentityAssociation:
     Type: AWS::EKS::PodIdentityAssociation
@@ -119,6 +143,10 @@ Outputs:
     Value: !Sub
       - https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${Ws}/api/v1/remote_write
       - Ws: !If [CreateAmp, !GetAtt AmpWorkspace.WorkspaceId, !Ref AmpWorkspaceId]
+  OsisLogsUrl:
+    Condition: Logs
+    Description: Pass to Helm as OSIS_LOGS_URL.
+    Value: !Ref OsisLogsUrl
   AmpWorkspaceId:
     Description: Pass to the access stack (hud-access.yaml) as AmpWorkspaceId.
     Value: !If [CreateAmp, !GetAtt AmpWorkspace.WorkspaceId, !Ref AmpWorkspaceId]

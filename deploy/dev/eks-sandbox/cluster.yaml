@@ -1,0 +1,42 @@
+# Small EKS cluster for testing the EKS onboarding (sandbox account, us-east-1).
+# Create: eksctl create cluster -f deploy/dev/eks-sandbox/cluster.yaml --profile sandbox
+# Reach:  aws eks update-kubeconfig --name hud-eks-sandbox --region us-east-1 --profile sandbox
+# Reset the onboarding (keeps the cluster): deploy/dev/eks-sandbox/reset.sh
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: hud-eks-sandbox
+  region: us-east-1
+  version: "1.35"
+  # eksctl puts these on its CloudFormation stacks, so they propagate to the VPC, cluster, roles and nodes.
+  tags:
+    hud:managed-by: cursor-agent
+    hud:project: hud-otel-collector-e2e
+    hud:run: eks-sandbox
+
+# The collector's role uses EKS Pod Identity (eks-iam.yaml's default AuthMode).
+addons:
+  - name: eks-pod-identity-agent
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+
+# ponytail: one NAT gateway (not one per AZ); fine for a sandbox, not for HA.
+vpc:
+  nat:
+    gateway: Single
+
+managedNodeGroups:
+  - name: arm
+    instanceType: t4g.large
+    amiFamily: AmazonLinux2023
+    desiredCapacity: 2
+    minSize: 1
+    maxSize: 3
+    volumeSize: 20
+    privateNetworking: true
+    tags:
+      hud:managed-by: cursor-agent
+      hud:project: hud-otel-collector-e2e
+      hud:run: eks-sandbox

@@ -1,5 +1,5 @@
 # Values for the official chart: https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-collector
-# Required: --set-string extraEnvs[0].value=<AMP remote write URL>,extraEnvs[1].value=<region>
+# Required: --set-string extraEnvs[0].value=<AMP remote write URL>,extraEnvs[1].value=<region>,extraEnvs[2].value=<OSIS logs URL>
 # Merge mode by default (your apps must send deltas). For one series per pod add -f values-convert.yaml.
 mode: deployment
 fullnameOverride: hud-collector
@@ -27,6 +27,8 @@ extraEnvs:
     value: ""
   - name: AWS_REGION
     value: ""
+  - name: OSIS_LOGS_URL
+    value: ""
 
 ports:
   otlp: { enabled: false }
@@ -43,6 +45,9 @@ alternateConfig:
     sigv4auth:
       region: ${env:AWS_REGION}
       service: aps
+    sigv4auth/osis:
+      region: ${env:AWS_REGION}
+      service: osis
   receivers:
     otlp:
       protocols:
@@ -96,8 +101,14 @@ alternateConfig:
       endpoint: ${env:AMP_REMOTE_WRITE_URL}
       auth:
         authenticator: sigv4auth
+    # Investigations: OTLP logs to OpenSearch Ingestion. No traces: any the collector receives aren't Hud's.
+    otlp_http/osis:
+      logs_endpoint: ${env:OSIS_LOGS_URL}
+      auth:
+        authenticator: sigv4auth/osis
+      compression: none
   service:
-    extensions: [health_check, sigv4auth]
+    extensions: [health_check, sigv4auth, sigv4auth/osis]
     pipelines:
       metrics/functions:
         receivers: [otlp]
@@ -107,3 +118,7 @@ alternateConfig:
         receivers: [otlp]
         processors: [memory_limiter, filter/per_pod, batch, transform/environment, delta_to_cumulative]
         exporters: [prometheus_remote_write]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlp_http/osis]

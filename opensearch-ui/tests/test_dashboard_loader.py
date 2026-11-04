@@ -108,6 +108,17 @@ class DashboardLoaderTest(unittest.TestCase):
             for ln in lines:
                 self.assertEqual(json.dumps(loader.encode(ln.obj), **loader._style(ln.raw)), ln.raw, ln.where)
 
+    def test_otel_logs_layout(self):
+        out = self.tmp / "out"
+        code, log = self.run_loader(DASHBOARDS, *self.opensearch_ui_args(out), "--logs-layout", "otel")
+        self.assertEqual(code, 0, log)
+        text = (out / "hud.ndjson").read_text()
+        self.assertNotIn("log.attributes.", text)
+        self.assertNotRegex(text, r"resource\.attributes\.\w+@")
+        if "hud@forensic@type" in self.text:
+            self.assertIn("`attributes.hud.forensic.type`", text)
+            self.assertIn("`resource.attributes.deployment.environment.name`", text)
+
     def test_opensearch_ui(self):
         out = self.tmp / "out"
         code, log = self.run_loader(DASHBOARDS, *self.opensearch_ui_args(out))

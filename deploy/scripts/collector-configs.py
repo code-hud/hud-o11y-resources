@@ -2,8 +2,8 @@
 """Renders every collector config the templates and Helm values can produce into OUT_DIR (default a temp dir),
 checks their pipelines and prints the image they pin. With --validate, also runs `validate` on each config in that
 image with Docker (run by .github/workflows/cfn-lint.yaml and collector-bump.yaml).
-ecs-fargate.yaml: merge and convert, each with and without OSIS logs. Helm: values.yaml, and values.yaml with
-values-convert.yaml on top."""
+ecs-fargate.yaml: merge and convert, each with and without OSIS logs. Helm (always with logs): values.yaml, and
+values.yaml with values-convert.yaml on top."""
 import copy, re, subprocess, sys, tempfile
 from pathlib import Path
 
@@ -62,7 +62,7 @@ def helm_merge(a, b):
 def helm_configs():
     base = yaml.safe_load((ROOT / "helm/values.yaml").read_text())
     convert = helm_merge(copy.deepcopy(base), yaml.safe_load((ROOT / "helm/values-convert.yaml").read_text()))
-    for name, v in (("helm-merge", base), ("helm-convert", convert)):
+    for name, v in (("helm-merge-logs", base), ("helm-convert-logs", convert)):
         yield name, yaml.safe_dump(v["alternateConfig"], sort_keys=False), "%s:%s" % (v["image"]["repository"], v["image"]["tag"])
 
 
@@ -71,7 +71,7 @@ def check(name, c):
     pipes, procs = c["service"]["pipelines"], c["processors"]
     assert not [p for p in pipes if p.split("/")[0] == "traces"], "traces pipeline"
     metrics = {k: v for k, v in pipes.items() if k.split("/")[0] == "metrics"}
-    assert set(metrics) == ({"metrics/functions", "metrics/per_pod"} if merge or name == "helm-convert" else {"metrics"}), metrics
+    assert set(metrics) == ({"metrics/functions", "metrics/per_pod"} if merge or name.startswith("helm-convert") else {"metrics"}), metrics
     env = procs["transform/environment"]["metric_statements"]
     assert env == [{"context": "datapoint", "statements": [ENVIRONMENT]}], env
     for k, p in metrics.items():
@@ -95,7 +95,8 @@ def check(name, c):
         assert pipes["logs"] == {"receivers": ["otlp"], "processors": ["memory_limiter", "batch"],
                                  "exporters": ["otlp_http/osis"]}, pipes["logs"]
         assert "sigv4auth/osis" in c["service"]["extensions"], c["service"]["extensions"]
-        assert c["exporters"]["otlp_http/osis"]["logs_endpoint"] == PARAMS["OsisLogsUrl"]
+        assert c["exporters"]["otlp_http/osis"]["logs_endpoint"] == (
+            "${env:OSIS_LOGS_URL}" if name.startswith("helm-") else PARAMS["OsisLogsUrl"])
     else:
         assert "logs" not in pipes and "otlp_http/osis" not in c["exporters"], name
         assert "sigv4auth/osis" not in c.get("extensions", {}), name
@@ -104,7 +105,8 @@ def check(name, c):
 def validate(out, image):
     # Dummy credentials: sigv4auth needs some to start, and validate never sends anything.
     env = {"AWS_ACCESS_KEY_ID": "x", "AWS_SECRET_ACCESS_KEY": "x", "AWS_REGION": "us-east-1", "MY_POD_IP": "127.0.0.1",
-           "AMP_REMOTE_WRITE_URL": "https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-x/api/v1/remote_write"}
+           "AMP_REMOTE_WRITE_URL": "https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-x/api/v1/remote_write",
+           "OSIS_LOGS_URL": PARAMS["OsisLogsUrl"]}
     failed = []
     for f in sorted(out.glob("*.yaml")):
         cmd = ["docker", "run", "--rm", "-v", "%s:/config.yaml:ro" % f.resolve()]
