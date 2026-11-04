@@ -14,7 +14,7 @@ metadata:
   namespace: shop
 data:
   package.json: |
-    { "name": "shop-api", "private": true, "dependencies": { "express": "4.21.2", "hud-sdk": "1.12.0" } }
+    { "name": "shop-api", "private": true, "dependencies": { "express": "4.21.2", "hud-sdk": "1.12.1" } }
   server.js: |
     const express = require("express");
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -106,7 +106,7 @@ spec:
             - { name: HUD_SERVICE, value: shop-api }
             - { name: HUD_EXPORTER, value: otlp }
             - { name: HUD_OTLP_ENDPOINT, value: "http://hud-collector.hud:4318" }
-            # Investigations (sent as OTLP logs) are off unless this or Hud's remote config turns them on.
+            # Investigations (sent as OTLP logs) follow Hud's remote config for the key; this forces them on.
             - { name: HUD_ENABLE_INVESTIGATION, value: "true" }
             - { name: OTEL_RESOURCE_ATTRIBUTES, value: "deployment.environment.name=eks-sandbox" }
           ports: [{ containerPort: 8080 }]

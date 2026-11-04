@@ -132,7 +132,9 @@ pattern. Add `-f deploy/helm/values-convert.yaml` for `convert` mode. With IRSA,
 `eks.amazonaws.com/role-arn` annotation to the `RoleArn` output.
 
 **Your apps.** Set `HUD_EXPORTER=otlp` and `HUD_OTLP_ENDPOINT=http://hud-collector.hud:4318` in your apps, next to
-your usual `HUD_KEY` and `HUD_SERVICE`: the SDK still checks the key with Hud when it starts. Metrics show up in the
+your usual `HUD_KEY` and `HUD_SERVICE` (tested with `hud-sdk` 1.12.1). The SDK still checks the key with Hud when it
+starts, and doesn't load without it (E1004). Hud's settings for your key decide whether it sends investigations; set
+`HUD_ENABLE_INVESTIGATION=true` to always send them. Metrics show up in the
 OpenSearch UI (`DashboardUrl` output) through its AMP data source (PromQL), and investigations in its logs. To add
 the Hud dashboards, see [Hud dashboards](#hud-dashboards).
 
