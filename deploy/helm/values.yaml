@@ -68,7 +68,7 @@ alternateConfig:
       metric_statements:
         - context: resource
           statements:
-            - keep_keys(attributes, ["service.name", "service.namespace", "deployment.environment.name", "deployment.id", "k8s.namespace.name", "cloud.provider", "cloud.region", "telemetry.sdk.version", "hud.identity.version"])
+            - keep_keys(attributes, ["service.name", "service.namespace", "deployment.environment.name", "deployment.id", "k8s.namespace.name", "cloud.provider", "cloud.region"])
         - context: datapoint
           statements:
             - merge_maps(attributes, resource.attributes, "insert")
@@ -77,12 +77,17 @@ alternateConfig:
           statements:
             - keep_keys(attributes, ["service.name", "service.namespace"])
             - set(attributes["service.instance.id"], "${env:HOSTNAME}")
-    # Copies the environment onto the data points so it becomes a label; the resource (target_info, job, instance) is unchanged.
+    # Copies the environment, deployment, namespace and cloud onto the data points so they become labels, as on merged
+    # function metrics; a missing or empty one adds no label. The resource (target_info, job, instance) is unchanged.
     transform/environment:
       metric_statements:
         - context: datapoint
           statements:
-            - set(attributes["deployment.environment.name"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil
+            - set(attributes["deployment.environment.name"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil and resource.attributes["deployment.environment.name"] != ""
+            - set(attributes["deployment.id"], resource.attributes["deployment.id"]) where resource.attributes["deployment.id"] != nil and resource.attributes["deployment.id"] != ""
+            - set(attributes["k8s.namespace.name"], resource.attributes["k8s.namespace.name"]) where resource.attributes["k8s.namespace.name"] != nil and resource.attributes["k8s.namespace.name"] != ""
+            - set(attributes["cloud.provider"], resource.attributes["cloud.provider"]) where resource.attributes["cloud.provider"] != nil and resource.attributes["cloud.provider"] != ""
+            - set(attributes["cloud.region"], resource.attributes["cloud.region"]) where resource.attributes["cloud.region"] != nil and resource.attributes["cloud.region"] != ""
     transform/restamp:
       metric_statements:
         - context: datapoint

@@ -23,14 +23,14 @@ Two modes:
 - `merge` (default): function metrics (`code.function.*`) from all your app pods add into one series per
   collector task/pod and deployment. Per-pod resource attributes (`process.pid`, `k8s.pod.name`, ...) are dropped
   from them; the kept ones become labels: `deployment_environment_name`, `deployment_id`, `k8s_namespace_name`,
-  `cloud_provider`, `cloud_region`, `telemetry_sdk_version` and `hud_identity_version` (each only when your apps
-  set it). During a rollout the old and new deployments are separate series, so for totals use
-  `sum without (deployment_id, telemetry_sdk_version) (...)`. Flow and process metrics stay one series per app pod
-  and also carry `deployment_environment_name`.
-- `convert`: one series per app pod for every metric, each labeled `deployment_environment_name`.
+  `cloud_provider` and `cloud_region`. During a rollout the old and new deployments are separate series, so for
+  totals use `sum without (deployment_id) (...)`. Flow and process metrics stay one series per app pod and carry
+  the same labels.
+- `convert`: one series per app pod for every metric, with the same labels.
 
-In both modes every metric gets `deployment_environment_name` when your apps set the `deployment.environment.name`
-resource attribute; `target_info`, `job` and `instance` are unchanged.
+In both modes every metric gets `deployment_environment_name`, `deployment_id`, `k8s_namespace_name`,
+`cloud_provider` and `cloud_region` from the matching resource attributes, each only when your apps set it (the
+Hud SDK sets the cloud ones on AWS); `target_info`, `job` and `instance` are unchanged.
 
 Both take the deltas the Hud SDK sends; point your apps at the collector with `HUD_EXPORTER=otlp` and `HUD_OTLP_ENDPOINT`.
 

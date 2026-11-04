@@ -14,8 +14,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from unify import Loader, Tag  # noqa: E402
 
 IMAGE = "ghcr.io/code-hud/hud-otel-collector"
-ENVIRONMENT = ('set(attributes["deployment.environment.name"], resource.attributes["deployment.environment.name"])'
-               ' where resource.attributes["deployment.environment.name"] != nil')
+LABELS = ["deployment.environment.name", "deployment.id", "k8s.namespace.name", "cloud.provider", "cloud.region"]
+ENVIRONMENT = ['set(attributes["{0}"], resource.attributes["{0}"]) where resource.attributes["{0}"] != nil'
+               ' and resource.attributes["{0}"] != ""'.format(k) for k in LABELS]
+MERGE_KEEP = 'keep_keys(attributes, [%s])' % ", ".join('"%s"' % k for k in ["service.name", "service.namespace", *LABELS])
 # Substituted for the template's parameters; any other ${...} left over (except ${env:...}) fails the render.
 PARAMS = {"AWS::Region": "us-east-1", "ExportInterval": "60", "OsisLogsUrl": "https://p.us-east-1.osis.amazonaws.com/p/v1/logs"}
 
@@ -73,13 +75,16 @@ def check(name, c):
     metrics = {k: v for k, v in pipes.items() if k.split("/")[0] == "metrics"}
     assert set(metrics) == ({"metrics/functions", "metrics/per_pod"} if merge or name == "helm-convert" else {"metrics"}), metrics
     env = procs["transform/environment"]["metric_statements"]
-    assert env == [{"context": "datapoint", "statements": [ENVIRONMENT]}], env
+    assert env == [{"context": "datapoint", "statements": ENVIRONMENT}], env
+    if merge:
+        keep = procs["transform/merge"]["metric_statements"][0]["statements"]
+        assert keep == [MERGE_KEEP], keep
     for k, p in metrics.items():
         ps = p["processors"]
         assert p["receivers"] == ["otlp"] and p["exporters"] == ["prometheus_remote_write"], (k, p)
         assert ps[0] == "memory_limiter" and "batch" in ps and "delta_to_cumulative" in ps, (k, ps)
         assert ps.index("batch") < ps.index("delta_to_cumulative"), (k, ps)
-        # Every metric carries deployment_environment_name: transform/merge keeps it on functions in merge mode.
+        # Every metric carries the LABELS: transform/merge keeps them on functions in merge mode.
         label = "transform/merge" if merge and k == "metrics/functions" else "transform/environment"
         assert label in ps and ps.index(label) < ps.index("delta_to_cumulative"), (k, ps)
     if merge:
