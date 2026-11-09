@@ -230,6 +230,10 @@ investigation panels don't work on the stack's OpenSearch Serverless collection 
 that store each service's, flow's, function's and instance's increase over the last hour, so the Hud dashboards
 can sum hourly points instead of scanning raw samples. It is the only place these rules live.
 
+The rules evaluate every 5 minutes; every sample is the full trailing-hour increase, so the interval only sets
+freshness and cost, not accuracy. The dashboards read each record through `last_over_time(<record>[10m])` so that a
+5-minute gap between samples never drops an hour boundary. Keep the two in step if you change either.
+
 Every template that creates an AMP workspace installs it as a nested stack, `HourlyRecordingRules`, from
 `<TemplatesUrl>/hud-hourly-rules.yaml`: the one-stack templates, `observability.yaml`, and `ecs-fargate.yaml` and
 `eks-iam.yaml` when you leave `AmpWorkspaceId` empty. `TemplatesUrl` defaults to the folder the template was

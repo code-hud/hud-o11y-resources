@@ -6,18 +6,20 @@ Commands below run from the repository root.
 
 | Path | Contents |
 | --- | --- |
-| `opensearch-ui/dashboards/` | The Hud dashboards ("Hud: ..."), together with their panels, queries and index pattern, as NDJSON saved-object exports from OpenSearch UI or OpenSearch Dashboards (with related objects included). |
+| `opensearch-ui/dashboards/hud-all-dashboards.ndjson` | All the Hud dashboards ("Hud: ...") in one NDJSON saved-object export, with their panels, queries and index pattern. **This is the file to import**: the dashboards link to one another by object ID, and importing them together keeps those links working. |
+| `opensearch-ui/dashboards/individual-dashboards/` | The same objects split into one export per dashboard, for reference (reading one dashboard's panels and queries, or reviewing a change). Not for importing on their own: a dashboard imported alone has dangling links to the others. |
 | `opensearch-ui/scripts/dashboard-loader.py` | Adapts the dashboards to your environment (workspace, data sources, index pattern, OpenSearch Dashboards version) and checks the result before you import it. |
 | `opensearch-ui/rules/` | Prometheus rule groups for the Hud SDK metrics. One file per namespace, named after the entity it alerts on. |
 | `opensearch-ui/tests/test_dashboard_loader.py` | Tests for the dashboard loader, run against the dashboards in `opensearch-ui/dashboards/`. |
 
 ## Prerequisites
 
-- Python 3.9 or later, to run `opensearch-ui/scripts/dashboard-loader.py`. It uses only the standard library.
+- Python 3.10 or later, to run `opensearch-ui/scripts/dashboard-loader.py`. It uses only the standard library.
 - One of:
   - an **OpenSearch UI** application with a workspace for the Hud data, and permission to import saved objects into it;
   - a self-managed **OpenSearch Dashboards** 3.9 or later.
 - The Hud SDK metrics in Prometheus or Amazon Managed Service for Prometheus (AMP), connected as a Prometheus data connection. Most panels are PromQL queries against them.
+- The `hud-hourly` recording rules in that Prometheus (see [Hourly recording rules](../deploy/README.md#hourly-recording-rules)). The tables and KPI tiles of **Hud: 1. Services** and **Hud: 2. Service Overview** read these hourly aggregates instead of scanning raw samples, so they load in seconds at any range; they sum one sample per clock hour, so the current hour is not included until it closes (the tables end 0 to 65 minutes before now: up to an hour, plus up to the rules' 5-minute interval), and they are empty until the rules have run for an hour.
 - Hud forensics exported as OTLP logs to OpenSearch, in indices matching `logs-otel-v1*` (or another pattern, see below). The investigations and exceptions panels are PPL queries against these logs.
 
 ## Install the dashboards
@@ -33,7 +35,7 @@ Commands below run from the repository root.
 
 ### 2. Adapt the dashboards
 
-`opensearch-ui/scripts/dashboard-loader.py` reads every `*.ndjson` file under `opensearch-ui/dashboards/`, fills in your environment, checks the result, and writes all the objects to a single file, `out/hud.ndjson`. The files under `opensearch-ui/dashboards/` are not modified.
+`opensearch-ui/scripts/dashboard-loader.py` reads `opensearch-ui/dashboards/hud-all-dashboards.ndjson` (every `*.ndjson` directly under `opensearch-ui/dashboards/`; the per-dashboard files in `individual-dashboards/` are reference copies of the same objects), fills in your environment, checks the result, and writes all the objects to a single file, `out/hud.ndjson`. The files under `opensearch-ui/dashboards/` are not modified.
 
 **OpenSearch UI:**
 
@@ -59,8 +61,8 @@ python3 opensearch-ui/scripts/dashboard-loader.py --target osd \
 | --- | --- | --- |
 | `--workspace-id` | Your workspace ID. Required for OpenSearch UI. For OpenSearch Dashboards, only if workspaces are enabled. | The part after `/w/` in the workspace URL, e.g. `abc123` in `https://application-…opensearch.amazonaws.com/w/abc123/app/…` |
 | `--opensearch-data-source-id` | The ID of the OpenSearch data source that holds the Hud logs. Required for OpenSearch UI. For OpenSearch Dashboards, omit it to query the local cluster. | Open **Data sources** and click the domain; the ID is the last part of the page URL |
-| `--opensearch-data-source-title` | The data source's name, shown in the query editor. Optional. | Same page |
-| `--prometheus-connection` | The name of the Prometheus data connection from step 1. Omit it if you used the name the dashboards already have. | **Data sources** > **Data connections** |
+| `--opensearch-data-source-title` | The data source's name, shown in the query editor. Optional: without it the editor shows the data source ID. | Same page |
+| `--prometheus-connection` | The name of the Prometheus data connection from step 1. Omit it if you named it `hud_amp` (the name in the dashboard files) or pass `--prometheus-arn`, whose last part is the name. | **Data sources** > **Data connections** |
 | `--prometheus-arn` | The ARN of the Prometheus data connection. Required for OpenSearch UI. Not used for OpenSearch Dashboards. | `aws opensearch get-direct-query-data-source --data-source-name <connection name>`, or build it as `arn:aws:opensearch:<region>:<account>:datasource/<connection name>` |
 | `--logs-index-pattern` | The index pattern of the Hud logs, if it is not `logs-otel-v1*`. | Your log pipeline's index settings |
 | `--logs-layout` | `otel` if your pipeline keeps log attributes nested (`attributes.hud.forensic.type`), as the Hud CloudFormation stacks' does. The default, `opensearch`, is Data Prepper's flattened layout (`log.attributes.hud@forensic@type`). | Your pipeline's `output_format`: the `otlp` source defaults to `otel`, `otel_logs_source` to `opensearch` |
@@ -76,7 +78,7 @@ The script then checks that no placeholder is left, and that every reference, in
 1. Open OpenSearch UI or OpenSearch Dashboards, and switch to the workspace if you use one.
 2. Open **Assets** (without workspaces: **Dashboards Management** > **Saved objects**).
 3. Click **Import** and select `out/hud.ndjson`.
-4. Choose **Check for existing objects** > **Automatically overwrite conflicts**, and click **Import**. Keep the original object IDs (do not choose **Create new objects with random IDs**): the "click one for its page" links between the dashboards refer to them.
+4. Choose **Check for existing objects** > **Automatically overwrite conflicts**, and click **Import**. Keep the original object IDs (do not choose **Create new objects with random IDs**): the "click one for its page" links between the dashboards refer to them. Import all the dashboards together (the loader's output, built from `hud-all-dashboards.ndjson`) for the same reason: the Services list opens a service's overview, which opens its flows and functions, by object ID.
 5. Go to **Dashboards** and open any of the dashboards whose names start with `Hud:`. Pick a service in the **Service** filter at the top.
 
 On self-managed OpenSearch Dashboards you can also import with the API (add `/w/<workspace id>` before `/api` for a workspace):
@@ -87,6 +89,15 @@ curl -u <user> -X POST "https://<your dashboards host>/api/saved_objects/_import
 ```
 
 To upgrade, check out the newer release tag, run `opensearch-ui/scripts/dashboard-loader.py` again with the same options, and import the result the same way.
+
+If you import in the OpenSearch UI with a data source selected in the **Import assets** dialog, it appends `_<data source name>` to the dashboard titles (for example `Hud: 1. Services_my-logs`). Rename them afterwards, or import with the API.
+
+### Known limitations
+
+- **Time ranges up to 31 days.** AMP rejects queries that span 32 days or more if they contain a range selector or subquery longer than 7 days, and the hourly-aggregate tables and tiles sum the whole range in one subquery. At longer ranges these panels show an error, or zeros in a table column.
+- **"Runs vs prev week" up to 24 days.** The comparison also reads the same range a week earlier, so it reaches back the range plus 7 days. From 25 days on, the **Runs vs prev week (%)** tile shows an AMP error and the table columns show 0.
+- **History starts with the rules.** The hourly aggregates exist only from the time the `hud-hourly` rules were installed. For ranges longer than that, the tables cover only the time since then.
+- **Function links open on one service.** A link from a function opens **Hud: 4. Function** on the first service that runs the function, which isn't always the service you clicked from. Data links can only pass the clicked value, not the current **Service** selection. Pick the service in the dropdown if the function runs in several services.
 
 ## Install the alert rules
 
@@ -153,4 +164,4 @@ The hourly recording rules (`hud-hourly`) are not in this folder: the CloudForma
 
 ## Development
 
-`python3 -m unittest discover -s opensearch-ui/tests` runs the loader's tests against the dashboards in `opensearch-ui/dashboards/`.
+`python3 -m unittest discover -s opensearch-ui/tests` runs the loader's tests against the dashboards in `opensearch-ui/dashboards/`. The `dashboard-loader-tests` workflow runs them on every pull request that changes `opensearch-ui/`, on Python 3.10 (the minimum) and 3.14.

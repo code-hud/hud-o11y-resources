@@ -5,16 +5,18 @@ Reads every *.ndjson under the input paths (default: dashboards/), rewrites the 
 values, checks the result and writes all objects to one file, <out>/hud.ndjson. Sources are never modified.
 
 What is rewritten:
-  - the workspace in dashboard link URLs (/w/<id>/app/...), or the prefix removed when no workspace is used;
+  - the workspace in dashboard link URLs (/w/<id>/app/...): added for OpenSearch UI and OSD with workspaces
+    (the committed exports carry none), removed when no workspace is used;
   - the OpenSearch data source id (data-source references and dataset.dataSource), or both removed
-    for a self-managed OSD that queries its local cluster;
+    for a self-managed OSD that queries its local cluster; its title is set to --opensearch-data-source-title,
+    or to the new id when that is not given, so the exporting environment's name is never carried over;
   - the Prometheus connection name (dataset id/title of PromQL panels and dashboard variables), and the
     AMP data source ARN OpenSearch UI stores on Query variables (removed for a self-managed OSD);
   - PromQL panels' index-pattern reference to the connection, which some exports add, is removed;
   - the logs index pattern (index-pattern title, dataset title, PPL "source = ..." clauses);
   - dashboard links that use '$__all', when the target is older than OSD 3.10 (see --links).
 
-Python 3.9+, standard library only.
+Python 3.10+, standard library only.
 """
 
 import argparse
@@ -370,10 +372,13 @@ def rewrite_data_source(objs, new_id, new_title, remove):
             if isinstance(src, dict) and src.get("id") and str(src.get("type", "")).lower() == "opensearch":
                 if remove:
                     del ds["dataSource"]
-                else:
-                    src["id"] = new_id
-                    if new_title:
-                        src["title"] = new_title
+                    continue
+                if new_title:
+                    src["title"] = new_title
+                elif src["id"] != new_id and "title" in src:
+                    # The title names the exporting environment's data source; never carry it over.
+                    src["title"] = new_id
+                src["id"] = new_id
 
 
 def rewrite_workspace(objs, workspace_id):
@@ -578,7 +583,8 @@ def main(argv=None):
     ap.add_argument("--opensearch-data-source-id", help="saved-object id of the OpenSearch data source that holds "
                                                         "the logs (required for opensearch-ui; omit for OSD "
                                                         "querying its local cluster)")
-    ap.add_argument("--opensearch-data-source-title", help="its title, shown in the query editor (optional)")
+    ap.add_argument("--opensearch-data-source-title",
+                    help="its title, shown in the query editor (optional; defaults to the id)")
     ap.add_argument("--prometheus-connection", action="append", metavar="[OLD=]NEW",
                     help="name of the Prometheus data connection (default: keep the name in the export)")
     ap.add_argument("--prometheus-arn", metavar="ARN",
@@ -641,13 +647,15 @@ def main(argv=None):
     ip_found = {o["attributes"]["title"] for o in objs if o.get("type") == "index-pattern"}
     ds_found = opensearch_data_sources(objs)
     arn_found = prometheus_arns(objs)
-    ws_found = set()
+    ws_found, has_links = set(), []
     for o in objs:
-        map_strings(o, lambda s: (ws_found.update(WORKSPACE_RE.findall(s)), s)[1])
+        map_strings(o, lambda s: (ws_found.update(WORKSPACE_RE.findall(s)),
+                                  has_links.append(True) if "/app/dashboards#" in s else None, s)[2])
 
     if args.target == "opensearch-ui":
-        if ws_found and not args.workspace_id:
-            report.error("--workspace-id is required: the dashboard links are workspace paths (/w/<id>/app/...)")
+        if (ws_found or has_links) and not args.workspace_id:
+            report.error("--workspace-id is required: OpenSearch UI dashboard links are workspace paths "
+                         "(/w/<id>/app/...)")
         if ds_found and not args.opensearch_data_source_id:
             report.error("--opensearch-data-source-id is required: the logs panels name an OpenSearch data source")
         if arn_found and not args.prometheus_arn:
@@ -655,6 +663,10 @@ def main(argv=None):
                          f"account's Prometheus data source ({', '.join(sorted(arn_found))})")
 
     prom_map = parse_mapping(args.prometheus_connection, "Prometheus connection", prom_found, report)
+    arn_match = ARN_RE.match(args.prometheus_arn) if args.prometheus_arn else None
+    if not args.prometheus_connection and arn_match and len(prom_found) == 1:
+        # The ARN names the connection (.../datasource/<name>): without --prometheus-connection, use that name.
+        prom_map = {old: arn_match.group(1) for old in prom_found if old != arn_match.group(1)}
     ip_map = parse_mapping(args.logs_index_pattern, "index pattern", ip_found, report)
     args.prometheus_names = {prom_map.get(p, p) for p in prom_found}
     if args.prometheus_arn:
@@ -679,6 +691,10 @@ def main(argv=None):
         otel_layout(objs)
         report.note("logs layout: opensearch -> otel")
     if ds_found:
+        if (args.opensearch_data_source_id and not args.opensearch_data_source_title
+                and ds_found - {args.opensearch_data_source_id}):
+            report.warn("--opensearch-data-source-title not given: the logs panels show the data source id "
+                        f"{args.opensearch_data_source_id} as its name in the query editor")
         rewrite_data_source(objs, args.opensearch_data_source_id, args.opensearch_data_source_title,
                             remove=not args.opensearch_data_source_id)
     if ws_found or args.workspace_id:

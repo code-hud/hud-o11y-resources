@@ -151,6 +151,69 @@ class DashboardLoaderTest(unittest.TestCase):
             self.assertNotIn(f"source = {pattern}", text)
         self.assertEqual("\n".join(f.read_text() for f in sorted(DASHBOARDS.glob("*.ndjson"))), self.text)
 
+    def test_data_source_title_is_not_carried_over(self):
+        titles = {d["dataSource"]["title"] for o in self.objs for d in datasets(o)
+                  if isinstance(d.get("dataSource"), dict) and d["dataSource"].get("title")
+                  and str(d["dataSource"].get("type", "")).lower() == "opensearch"}
+        if not titles:
+            self.skipTest("no OpenSearch data source title in the dashboards")
+        for extra, expected in (([], "ds-9"), (["--opensearch-data-source-title", "My logs"], "My logs")):
+            out = self.tmp / f"out-{expected.replace(' ', '-')}"
+            code, log = self.run_loader(DASHBOARDS, *self.opensearch_ui_args(out), *extra)
+            self.assertEqual(code, 0, log)
+            text = (out / "hud.ndjson").read_text()
+            for t in titles:
+                self.assertNotIn(t, text)
+            got = {d["dataSource"]["title"] for o in read_ndjson(out / "hud.ndjson") for d in datasets(o)
+                   if isinstance(d.get("dataSource"), dict) and d["dataSource"].get("title")
+                   and str(d["dataSource"].get("type", "")).lower() == "opensearch"}
+            self.assertEqual(got, {expected})
+
+    def test_dashboards_carry_no_aws_account_id(self):
+        # The exporting account's ARN is environment data the loader replaces; the repo keeps a placeholder.
+        accounts = set(re.findall(r"arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:(\d{12}):", self.text))
+        self.assertLessEqual(accounts, {"000000000000"}, "replace the account id in exported ARNs with 000000000000")
+
+    def test_prometheus_connection_defaults_to_the_arn_name(self):
+        if len(self.prometheus) != 1 or not self.arns:
+            self.skipTest("needs exactly one Prometheus connection and a data source ARN")
+        out = self.tmp / "out"
+        args = [a for a in self.opensearch_ui_args(out) if not str(a).startswith("--prometheus-connection=")]
+        code, log = self.run_loader(DASHBOARDS, *args)
+        self.assertEqual(code, 0, log)
+        got = {d["id"] for o in read_ndjson(out / "hud.ndjson") for d in datasets(o)
+               if str(d.get("type")).upper() == "PROMETHEUS"}
+        self.assertEqual(got, {TARGET_ARN.rsplit("/", 1)[1]})
+
+    def test_dashboard_links_carry_no_workspace(self):
+        # The loader adds the target workspace; the exporting one has no place in the repo.
+        self.assertTrue(links(self.text), "no links between dashboards")
+        for ln in links(self.text):
+            self.assertTrue(ln.startswith("/app/dashboards#"), ln)
+
+    def test_opensearch_ui_requires_workspace_for_links(self):
+        out = self.tmp / "out"
+        args = self.opensearch_ui_args(out)
+        i = args.index("--workspace-id")
+        code, log = self.run_loader(DASHBOARDS, *(args[:i] + args[i + 2:]))
+        self.assertEqual(code, 1)
+        self.assertIn("--workspace-id is required", log)
+        self.assertFalse(out.exists())
+
+    def test_dashboards_carry_no_data_source_id(self):
+        # The loader sets the target's OpenSearch data source (or removes it); the repo keeps a zero UUID.
+        ids = {r["id"] for o in self.objs for r in o.get("references", []) if r.get("type") == "data-source"}
+        ids |= {d["dataSource"]["id"] for o in self.objs for d in datasets(o)
+                if isinstance(d.get("dataSource"), dict) and d["dataSource"].get("id")
+                and str(d["dataSource"].get("type", "")).lower() == "opensearch"}
+        self.assertLessEqual(ids, {"00000000-0000-0000-0000-000000000000"})
+
+    def test_dashboards_carry_a_neutral_data_source_title(self):
+        titles = {d["dataSource"]["title"] for o in self.objs for d in datasets(o)
+                  if isinstance(d.get("dataSource"), dict) and d["dataSource"].get("title")
+                  and str(d["dataSource"].get("type", "")).lower() == "opensearch"}
+        self.assertLessEqual(titles, {"hud-opensearch"})
+
     def test_opensearch_ui_requires_ids(self):
         if not self.has_data_source and not any("/w/" in ln for ln in links(self.text)):
             self.skipTest("the dashboards name no workspace or OpenSearch data source")
