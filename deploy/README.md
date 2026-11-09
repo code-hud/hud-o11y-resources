@@ -170,7 +170,7 @@ The Helm values always send investigations, so they need a pipeline.
 
 [Launch in CloudFormation](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhud-cloudformation-templates.s3.amazonaws.com%2Ftemplates%2Feks-iam.yaml&stackName=hud-collector-iam) (template: `deploy/aws/eks-iam.yaml`)
 
-To give Hud access, deploy `deploy/aws/hud-access.yaml` with the stack's `AmpWorkspaceId` output (see
+To give Hud access, deploy `deploy/aws/hud-access.yaml` with your OpenSearch UI app and its AMP data source (see
 [Hud access](#hud-access)).
 
 ## Hud access
@@ -180,15 +180,25 @@ create it, by installing `deploy/aws/hud-access.yaml` as a nested stack (`HudAcc
 ([alternatives](alternatives.md#hud-access-on-its-own)).
 
 The role trusts Hud's account, and only with the `ExternalId` Hud generated for you (prefilled in your launch
-link). It can only read:
-- AMP: `aps:QueryMetrics`, `aps:GetSeries`, `aps:GetLabels` and `aps:GetMetricMetadata` on the stack's AMP workspace.
-- OpenSearch Serverless: describe the collection and its indexes and read documents (investigations), through a
-  data access policy on the stack's collection. Its IAM policy allows `aoss:APIAccessAll`, which OpenSearch
-  Serverless requires for any data call, only for that collection (`aoss:collection` condition).
+link). It is tagged `hud=allowed`, the only roles Hud's backend may assume. Hud queries your data through your
+OpenSearch UI app, the same way you do, so the role can:
+- sign in to that one app and send it requests: `opensearch:ApplicationAccessAll`, `es:ESHttpGet`, `es:ESHttpPost`
+  and `es:GetApplication` on it, plus `es:ListApplications`;
+- run PromQL on the app's AMP data source: `opensearch:StartDirectQuery`, `GetDirectQuery`, `GetDirectQueryResult`
+  and `CancelDirectQuery` on that data source only. The data source's own role reads AMP, so Hud's role has no
+  `aps:` permissions;
+- read the collection (investigations) with PPL: describe the collection and its indexes and read documents,
+  through a data access policy on the stack's collection. Its IAM policy allows `aoss:APIAccessAll`, which
+  OpenSearch Serverless requires for any data call, only for that collection (`aoss:collection` condition).
 
-It can't write to AMP or to any collection. Give Hud the `HudRoleArn`, `CollectionName` and
-`CollectionEndpoint` outputs. To revoke access, delete the stack (with the one-stack deploy this removes the
-collector and Observability Stack too), or delete the role in IAM.
+It can't write to AMP or to any collection. The app shows data sources only to its admins and workspace
+collaborators. A new app makes everyone an admin (`dashboardAdmin` is `*`). For your own app (`ExistingUiAppId`),
+the stack adds Hud's role to its `dashboardAdmin.groups` unless that is already `*`, and removes only that entry when
+you delete the stack. The value is limited to 256 characters, so the stack fails if there isn't room.
+
+Give Hud the `HudRoleArn` output and your app's endpoint (the start of the `DashboardUrl` output, or
+`aws opensearch get-application --id <app id>`). To revoke access, delete the stack (with the one-stack deploy this
+removes the collector and Observability Stack too), or delete the role in IAM.
 
 ### Who can read the collection
 

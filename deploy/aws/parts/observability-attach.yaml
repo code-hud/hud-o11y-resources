@@ -24,6 +24,8 @@ Parameters:
     Default: ""
     AllowedPattern: ^([a-z0-9]{3,30})?$
     Description: Empty creates a new OpenSearch UI application with an Observability workspace. If you already have one, put its id here (aws opensearch list-applications) to add Hud's collection and AMP workspace to it as data sources instead; your other data sources are kept.
+  HudRoleArn:
+    Type: String
 
 Conditions:
   AttachToUi: !Not [!Equals [!Ref ExistingUiAppId, ""]]
@@ -78,6 +80,8 @@ Resources:
 
   # UpdateApplication takes the full dataSources list, so this merges into the app's current list and, on delete,
   # removes only the two entries it added. No workspace is created: you pick which of your workspaces gets them.
+  # Hud's role sees the data sources only as an app admin (or a workspace collaborator), so it is added to
+  # dashboardAdmin.groups the same way, unless that is already "*".
   AttachFunction:
     Type: AWS::Lambda::Function
     Condition: AttachToUi
@@ -123,6 +127,19 @@ Resources:
               if added:
                   os_.update_application(id=p["AppId"], dataSources=current + added)
 
+          ADMINS = "opensearchDashboards.dashboardAdmin.groups"
+
+          def set_admin(os_, app_id, add, drop):
+              configs = os_.get_application(id=app_id).get("appConfigs", [])
+              groups = next((json.loads(c["value"]) for c in configs if c["key"] == ADMINS), [])
+              want = [g for g in groups if g not in (add, drop)] + ([add] if add and "*" not in groups else [])
+              if want == groups:
+                  return
+              value = json.dumps(want, separators=(",", ":"))
+              if len(value) > 256:
+                  raise RuntimeError("%s would exceed its 256-character limit with %s; make room or use ExistingUiAppId with an app whose admins are \"*\"" % (ADMINS, add))
+              os_.update_application(id=app_id, appConfigs=[c for c in configs if c["key"] != ADMINS] + [{"key": ADMINS, "value": value}])
+
           def detach(p):
               os_ = boto3.client("opensearch")
               mine = set(ours(os_, p))
@@ -131,6 +148,7 @@ Resources:
                   kept = [d for d in current if d["dataSourceArn"] not in mine]
                   if len(kept) != len(current):
                       os_.update_application(id=p["AppId"], dataSources=kept)
+                  set_admin(os_, p["AppId"], None, p["HudRoleArn"])
               except Exception as e:
                   if not missing(e):
                       raise
@@ -155,6 +173,9 @@ Resources:
                       detach(p)
                   else:
                       attach(p)
+                      old = event.get("OldResourceProperties", {})
+                      set_admin(boto3.client("opensearch"), p["AppId"], p["HudRoleArn"],
+                                old.get("HudRoleArn") if old.get("AppId") == p["AppId"] else None)
                   status, physical_id, reason = "SUCCESS", p["AppId"], ""
               except Exception as e:
                   print("failed:", repr(e))
@@ -173,3 +194,4 @@ Resources:
       WorkspaceArn: !Ref AmpWorkspaceArn
       DirectQueryRoleArn: !GetAtt AttachDirectQueryRole.Arn
       DataSourceName: !Join ["_", [!Join ["_", !Split ["-", !Ref Name]], hud_prometheus]]
+      HudRoleArn: !Ref HudRoleArn

@@ -804,7 +804,53 @@ Resources:
       TemplateURL: !Sub '${TemplatesUrl}/hud-access.yaml'
       Parameters:
         ExternalId: !Ref 'ExternalId'
-        AmpWorkspaceId: !GetAtt 'Workspace.WorkspaceId'
+        UiAppId: !If
+        - NewUi
+        - !GetAtt 'Application.Id'
+        - !Ref 'ExistingUiAppId'
+        DirectQueryDataSourceName: !If
+        - NewUi
+        - !Join
+          - _
+          - - !Join
+              - _
+              - !Split
+                - '-'
+                - !Join
+                  - '-'
+                  - - !Ref 'NamePrefix'
+                    - !Select
+                      - 0
+                      - !Split
+                        - '-'
+                        - !Select
+                          - 2
+                          - !Split
+                            - /
+                            - !Ref 'AWS::StackId'
+            - prometheus
+        - !Join
+          - _
+          - - !Join
+              - _
+              - - !Join
+                  - _
+                  - !Split
+                    - '-'
+                    - !Join
+                      - '-'
+                      - - !Ref 'NamePrefix'
+                        - !Select
+                          - 0
+                          - !Split
+                            - '-'
+                            - !Select
+                              - 2
+                              - !Split
+                                - /
+                                - !Ref 'AWS::StackId'
+                - hud_prometheus
+            - !Ref 'ExistingUiAppId'
         CollectionName: !Join
         - '-'
         - - !Ref 'NamePrefix'
@@ -1143,6 +1189,19 @@ Resources:
               if added:
                   os_.update_application(id=p["AppId"], dataSources=current + added)
 
+          ADMINS = "opensearchDashboards.dashboardAdmin.groups"
+
+          def set_admin(os_, app_id, add, drop):
+              configs = os_.get_application(id=app_id).get("appConfigs", [])
+              groups = next((json.loads(c["value"]) for c in configs if c["key"] == ADMINS), [])
+              want = [g for g in groups if g not in (add, drop)] + ([add] if add and "*" not in groups else [])
+              if want == groups:
+                  return
+              value = json.dumps(want, separators=(",", ":"))
+              if len(value) > 256:
+                  raise RuntimeError("%s would exceed its 256-character limit with %s; make room or use ExistingUiAppId with an app whose admins are \"*\"" % (ADMINS, add))
+              os_.update_application(id=app_id, appConfigs=[c for c in configs if c["key"] != ADMINS] + [{"key": ADMINS, "value": value}])
+
           def detach(p):
               os_ = boto3.client("opensearch")
               mine = set(ours(os_, p))
@@ -1151,6 +1210,7 @@ Resources:
                   kept = [d for d in current if d["dataSourceArn"] not in mine]
                   if len(kept) != len(current):
                       os_.update_application(id=p["AppId"], dataSources=kept)
+                  set_admin(os_, p["AppId"], None, p["HudRoleArn"])
               except Exception as e:
                   if not missing(e):
                       raise
@@ -1175,6 +1235,9 @@ Resources:
                       detach(p)
                   else:
                       attach(p)
+                      old = event.get("OldResourceProperties", {})
+                      set_admin(boto3.client("opensearch"), p["AppId"], p["HudRoleArn"],
+                                old.get("HudRoleArn") if old.get("AppId") == p["AppId"] else None)
                   status, physical_id, reason = "SUCCESS", p["AppId"], ""
               except Exception as e:
                   print("failed:", repr(e))
@@ -1210,6 +1273,7 @@ Resources:
                         - /
                         - !Ref 'AWS::StackId'
         - hud_prometheus
+      HudRoleArn: !GetAtt 'HudAccess.Outputs.HudRoleArn'
 Outputs:
   OtlpEndpoint:
     Description: Set HUD_OTLP_ENDPOINT in your apps to this (the SDK adds /v1/metrics and /v1/logs).

@@ -97,6 +97,7 @@ TAGS = {"ecs-fargate.yaml": "collector", "eks-iam.yaml": "collector", "parts/hud
 INTERNAL = {"UI", "attach", "platform"}
 # What both one-stack templates share: Hud access, and a new OpenSearch UI app unless you name yours (ExistingUiAppId).
 COMMON = ["parts/hud-access-stack.yaml", "parts/observability-ui.yaml", "parts/observability-attach.yaml"]
+ACCESS, UI, ATTACH = COMMON
 # Stack-unique names (the first block of the stack id), so they can't clash with a stack you already run.
 UNIQUE_NAME = Tag("!Join", ["-", [Tag("!Ref", "NamePrefix"), Tag("!Select", [0, Tag("!Split", ["-", Tag("!Select", [
     2, Tag("!Split", ["/", Tag("!Ref", "AWS::StackId")])])])])]])
@@ -180,6 +181,20 @@ def rewriter(bound, fixed):
     return rewrite
 
 
+def access_links(loaded):
+    """Links the access part to the app Hud signs in to (new or ExistingUiAppId) and the AMP data source its UI part
+    creates there, and the attach part to Hud's role; these come from consumers, not the data outputs."""
+    existing = Tag("!Ref", "ExistingUiAppId")
+    attach_dqs = loaded[ATTACH]["Resources"]["Attach"]["Properties"]["DataSourceName"]
+    return {
+        "UiAppId": Tag("!If", [NEW_UI[0], Tag("!GetAtt", "Application.Id"), existing]),
+        # The attach Lambda appends the app id to its name (dqs_name).
+        "DirectQueryDataSourceName": Tag("!If", [NEW_UI[0], loaded[UI]["Resources"]["Setup"]["Properties"]["DataSourceName"],
+                                                 Tag("!Join", ["_", [attach_dqs, existing]])]),
+        "HudRoleArn": Tag("!GetAtt", "HudAccess.Outputs.HudRoleArn"),
+    }
+
+
 def build(consumers, description, unique_name=False, gates={}):
     data = load(PROVIDER)
     loaded = {n: load(n) for n in consumers}
@@ -195,6 +210,8 @@ def build(consumers, description, unique_name=False, gates={}):
                 bound[m.group(2)] = o["Value"]
             if set(re.split(r", | and ", m.group(1))) <= included | INTERNAL and "Give this to Hud" not in o["Description"]:
                 internal.add(k)
+    if ACCESS in loaded:
+        bound.update(access_links(loaded))
 
     # A bound parameter is never empty, so: Equals[Ref p, ""] is false.
     def cond(e):
