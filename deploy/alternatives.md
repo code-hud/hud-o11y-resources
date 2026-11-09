@@ -32,8 +32,9 @@ sources with it in the workspace's settings. Anyone in your account can read Hud
 ([Who can read the collection](README.md#who-can-read-the-collection)).
 
 Then point your apps at the stack's `OtlpEndpoint` and `HudExporter` outputs, as in the
-[one-stack deploy](README.md#ecs-fargate-hud-ecsyaml), and give Hud the `HudRoleArn`, `CollectionName` and
-`CollectionEndpoint` outputs.
+[one-stack deploy](README.md#ecs-fargate-hud-ecsyaml), and give Hud the `HudRoleArn` output and your app's endpoint
+(`aws opensearch get-application --id <app id>`). The stack makes Hud's role an admin of your app, so it sees the
+two data sources ([Hud access](README.md#hud-access)).
 
 ## Separate stacks
 
@@ -91,16 +92,21 @@ the NAT gateway. Without a NAT gateway they can't pull the image from GHCR or re
 ## Hud access on its own
 
 `deploy/aws/hud-access.yaml` creates only the read-only role described in [Hud access](README.md#hud-access),
-for an AMP workspace and, optionally, an OpenSearch Serverless collection you already have (empty
-`CollectionName` shares metrics only). `CollectionName` also limits the role's `aoss:APIAccessAll` to that
-collection. Use the collector stack's `AmpWorkspaceId` output, or the Observability
-Stack's `AmpWorkspaceId` and `CollectionName` outputs:
+for an OpenSearch UI app you already have, its AMP direct-query data source and, optionally, an OpenSearch
+Serverless collection (empty `CollectionName` shares metrics only). `CollectionName` also limits the role's
+`aoss:APIAccessAll` to that collection. Find the app id with `aws opensearch list-applications` and the data source
+name with `aws opensearch list-direct-query-data-sources`; the Observability Stack's are its app and
+`<Name with _ for ->_prometheus`, with `CollectionName` its `CollectionName` output:
 
 ```sh
 aws cloudformation deploy --stack-name hud-access --template-file deploy/aws/hud-access.yaml \
   --capabilities CAPABILITY_IAM --parameter-overrides \
-  ExternalId=<external id from Hud> AmpWorkspaceId=$AMP_WS CollectionName=hud-obs
+  ExternalId=<external id from Hud> UiAppId=<app id> DirectQueryDataSourceName=hud_obs_prometheus CollectionName=hud-obs
 ```
+
+This stack doesn't change your app, so Hud sees its data sources only if you make the role an admin of the app
+(add the `HudRoleArn` output to `opensearchDashboards.dashboardAdmin.groups`) or a collaborator on the workspace
+that has them. The Observability Stack's app makes everyone an admin, so it needs neither.
 
 [Launch in CloudFormation](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhud-cloudformation-templates.s3.amazonaws.com%2Ftemplates%2Fhud-access.yaml&stackName=hud-access) (template: `deploy/aws/hud-access.yaml`)
 

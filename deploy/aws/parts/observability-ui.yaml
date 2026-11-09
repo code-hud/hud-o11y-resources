@@ -45,6 +45,7 @@ Resources:
       Name: !Ref Name
       DataSources:
         - DataSourceArn: !Ref CollectionArn
+      # "*" also makes Hud's role an admin, which is what lets it see the data sources without a workspace grant.
       AppConfigs:
         - Key: opensearchDashboards.dashboardAdmin.users
           Value: '["*"]'

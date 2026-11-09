@@ -148,7 +148,7 @@ Outputs:
     Description: Pass to Helm as OSIS_LOGS_URL.
     Value: !Ref OsisLogsUrl
   AmpWorkspaceId:
-    Description: Pass to the access stack (hud-access.yaml) as AmpWorkspaceId.
+    Description: The AMP workspace the collector writes to.
     Value: !If [CreateAmp, !GetAtt AmpWorkspace.WorkspaceId, !Ref AmpWorkspaceId]
   AmpQueryUrl:
     Value: !Sub

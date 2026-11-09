@@ -17,7 +17,9 @@ Parameters:
     MaxLength: 1224
     AllowedPattern: ^[\w+=,.@:/-]+$
     Description: Prefilled by Hud's onboarding link and unique to you. Don't change it; Hud sends it when assuming the role, so with any other value Hud can't read your data.
-  AmpWorkspaceId:
+  UiAppId:
+    Type: String
+  DirectQueryDataSourceName:
     Type: String
   CollectionName:
     Type: String
@@ -34,7 +36,8 @@ Resources:
       TemplateURL: !Sub ${TemplatesUrl}/hud-access.yaml
       Parameters:
         ExternalId: !Ref ExternalId
-        AmpWorkspaceId: !Ref AmpWorkspaceId
+        UiAppId: !Ref UiAppId
+        DirectQueryDataSourceName: !Ref DirectQueryDataSourceName
         CollectionName: !Ref CollectionName
 
 Outputs:
