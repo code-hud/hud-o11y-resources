@@ -16,29 +16,29 @@ groups:
           (
             (
               (
-                (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
+                (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
                 increase(hud_flow_issues_total{http_response_status_code!~"4.."}[1h])
               ))
-                / on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left ()
-                (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+                / on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left ()
+                (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
                 histogram_count(increase(code_flow_duration_seconds[1h]))
               ))
               )
-              > on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint)
+              > on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint)
               (
                 2 * quantile_over_time(0.99,
                   (
                     (
-                      (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
+                      (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint) (
                 increase(hud_flow_issues_total{http_response_status_code!~"4.."}[1h])
               ))
-                      / on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left ()
-                      (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+                      / on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left ()
+                      (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
                 histogram_count(increase(code_flow_duration_seconds[1h]))
               ))
                     )
-                    and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
-                    (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+                    and on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
+                    (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
                 histogram_count(increase(code_flow_duration_seconds[1h]))
               )) >= 20
                   )[8d:1h] offset 1h
@@ -46,8 +46,8 @@ groups:
               )
             ) >= 0.05
           )
-          and on (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
-          (sum by (service_name, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
+          and on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
+          (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
                 histogram_count(increase(code_flow_duration_seconds[1h]))
               )) >= 50
         for: 0m
@@ -57,5 +57,5 @@ groups:
           endpoint_method: "{{ $labels.http_request_method }}"
           endpoint_path: '{{ if $labels.http_route }}{{ $labels.http_route }}{{ else }}{{ $labels.code_flow_name }}{{ end }}'
         annotations:
-          summary: "[alpha] Error rate spike on {{ $labels.service_name }} {{ $labels.code_flow_name }}"
+          summary: "[alpha] Error rate spike on {{ $labels.job }} {{ $labels.code_flow_name }}"
           description: "Error {{ $labels.issue_fingerprint }} rate {{ $value | humanizePercentage }} over the last hour (>= 5%), above twice its p99 hourly rate of the previous 8 days (>= 50 invocations)."
