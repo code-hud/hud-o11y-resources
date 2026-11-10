@@ -11,18 +11,18 @@ groups:
       - alert: HudFunctionDayOverWeekDegradation
         expr: |
           (
-            histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d])))
-            / on (service_name, deployment_environment_name, code_function_name, code_file_path)
-            histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[7d] offset 1d)))
+            histogram_quantile(0.9, sum by (job, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d])))
+            / on (job, deployment_environment_name, code_function_name, code_file_path)
+            histogram_quantile(0.9, sum by (job, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[7d] offset 1d)))
           ) >= 1.7
-          and on (service_name, deployment_environment_name, code_function_name, code_file_path) (histogram_quantile(0.9, sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d]))) >= 0.15)
-          and on (service_name, deployment_environment_name, code_function_name, code_file_path) (sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_calls_total{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d])) >= 100)
-          and on (service_name, deployment_environment_name, code_function_name, code_file_path) (sum by (service_name, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_calls_total{code_function_name=~"__NO_FUNCTION_SELECTED__"}[7d] offset 1d)) >= 100)
+          and on (job, deployment_environment_name, code_function_name, code_file_path) (histogram_quantile(0.9, sum by (job, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_call_duration_seconds{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d]))) >= 0.15)
+          and on (job, deployment_environment_name, code_function_name, code_file_path) (sum by (job, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_calls_total{code_function_name=~"__NO_FUNCTION_SELECTED__"}[1d])) >= 100)
+          and on (job, deployment_environment_name, code_function_name, code_file_path) (sum by (job, deployment_environment_name, code_function_name, code_file_path) (increase(code_function_calls_total{code_function_name=~"__NO_FUNCTION_SELECTED__"}[7d] offset 1d)) >= 100)
         for: 0m
         labels:
           severity: warning
           endpoint_method: ""
           endpoint_path: "{{ $labels.code_function_name }}"
         annotations:
-          summary: "Hud-style function p90 degradation on {{ $labels.service_name }} {{ $labels.code_function_name }}"
+          summary: "Hud-style function p90 degradation on {{ $labels.job }} {{ $labels.code_function_name }}"
           description: "Function p90 over the last 24h is {{ $value | humanize }}x the preceding 7 days (alert at >= 1.7x, >= 100 calls in both windows, p90 >= 150ms)."
