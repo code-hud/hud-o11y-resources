@@ -7,7 +7,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/code-hud/hud-otel-collector
-  tag: "0.163.2-hud.3"
+  tag: "0.165.0-hud.1"
 command:
   name: hud-otelcol
 
