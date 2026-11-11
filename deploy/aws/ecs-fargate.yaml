@@ -61,7 +61,7 @@ Parameters:
     MinValue: 1
   Image:
     Type: String
-    Default: ghcr.io/code-hud/hud-otel-collector:0.163.2-hud.3
+    Default: ghcr.io/code-hud/hud-otel-collector:0.165.0-hud.1
     Description: Public image, or a copy in your account's ECR.
   AmpWorkspaceId:
     Type: String
