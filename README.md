@@ -1,4 +1,4 @@
-# hud-o11y-resources
+# hud-opensearch-resources
 
 Observability resources for data produced by the Hud SDK. The repository has two parts:
 
@@ -32,8 +32,8 @@ Releases are tagged the same way as the Hud SDK releases. Use the tag that match
 
 ```bash
 VERSION=<release tag>   # e.g. the SDK version you run
-git clone --depth 1 --branch "${VERSION}" https://github.com/code-hud/hud-o11y-resources
-cd hud-o11y-resources
+git clone --depth 1 --branch "${VERSION}" https://github.com/code-hud/hud-opensearch-resources
+cd hud-opensearch-resources
 ```
 
 Commands in both guides run from the repository root.
