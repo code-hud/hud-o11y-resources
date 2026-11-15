@@ -4,7 +4,8 @@ Description: Hud hourly recording rules for the Hud OpenSearch dashboards, as th
 # Hud hourly aggregates: recording rules for the Hud OpenSearch dashboards (Services, Service Overview).
 # Each rule records a 1h increase per entity so dashboards sum N hourly points (sum_over_time(...[$range:1h]))
 # instead of scanning raw native-histogram samples over the whole range.
-# Labels: deployment_environment_name + job (service), plus code_flow_name/code_flow_type, code_function_name or service_instance_id.
+# Labels: deployment_environment_name + job (service), plus code_flow_name/code_flow_type, code_function_name or instance
+# (one SDK session: Prometheus remote write maps the resource attribute service.instance.id to instance).
 # code_flow_duration_seconds and code_function_call_duration_seconds are native histograms; names keep their _seconds unit.
 # Rules evaluate every 5 minutes (interval: 300s): each sample is a full trailing-hour increase, so a shorter interval
 # only adds ingest and evaluation load; dashboards read the records through last_over_time(<record>[10m]) so a
@@ -83,11 +84,11 @@ Resources:
             rules:
               # Runs: histogram_count of code_flow_duration_seconds.
               - record: instance:code_flow_runs:increase1h
-                expr: sum by (deployment_environment_name, job, service_instance_id) (histogram_count(increase(code_flow_duration_seconds[1h])))
+                expr: sum by (deployment_environment_name, job, instance) (histogram_count(increase(code_flow_duration_seconds[1h])))
               # Errors: 5xx runs of code_flow_duration_seconds + non-HTTP hud_flow_issues_total (each side 0 when absent).
               - record: instance:code_flow_errors:increase1h
                 expr: |
-                  (sum by (deployment_environment_name, job, service_instance_id) (histogram_count(increase(code_flow_duration_seconds{http_response_status_code=~"5.."}[1h]))) or sum by (deployment_environment_name, job, service_instance_id) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
-                  + (sum by (deployment_environment_name, job, service_instance_id) (increase(hud_flow_issues_total{code_flow_type!="http"}[1h])) or sum by (deployment_environment_name, job, service_instance_id) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
+                  (sum by (deployment_environment_name, job, instance) (histogram_count(increase(code_flow_duration_seconds{http_response_status_code=~"5.."}[1h]))) or sum by (deployment_environment_name, job, instance) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
+                  + (sum by (deployment_environment_name, job, instance) (increase(hud_flow_issues_total{code_flow_type!="http"}[1h])) or sum by (deployment_environment_name, job, instance) (histogram_count(increase(code_flow_duration_seconds[1h]))) * 0)
               - record: instance:process_uptime_seconds:last_timestamp
-                expr: max by (deployment_environment_name, job, service_instance_id) (timestamp(process_uptime_seconds))
+                expr: max by (deployment_environment_name, job, instance) (timestamp(process_uptime_seconds))

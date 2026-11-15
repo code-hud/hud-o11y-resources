@@ -214,6 +214,16 @@ class DashboardLoaderTest(unittest.TestCase):
                   and str(d["dataSource"].get("type", "")).lower() == "opensearch"}
         self.assertLessEqual(titles, {"hud-opensearch"})
 
+    def test_dashboards_and_rules_use_collector_labels(self):
+        # The Hud collector configurations write the service to job and the SDK session to instance
+        # (Prometheus remote write); service_name and service_instance_id exist only where a pipeline copies
+        # every resource attribute onto the series.
+        rules = "\n".join(f.read_text() for f in sorted((DASHBOARDS.parent / "rules").glob("*.yaml")))
+        for name, text in (("dashboards", self.text), ("alert rules", rules)):
+            for label in ("service_name", "service_instance_id"):
+                m = re.search(rf".{{0,60}}\b{label}\b.{{0,40}}", text)
+                self.assertIsNone(m, f"{name} use {label}, use job or instance: ...{m.group(0) if m else ''}...")
+
     def test_opensearch_ui_requires_ids(self):
         if not self.has_data_source and not any("/w/" in ln for ln in links(self.text)):
             self.skipTest("the dashboards name no workspace or OpenSearch data source")
