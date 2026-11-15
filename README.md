@@ -28,15 +28,31 @@ Observability resources for data produced by the Hud SDK. The repository has two
     └── scripts/             # unify.py, collector-configs.py, quick-create-link.sh, publish-templates.sh
 ```
 
-Releases are tagged the same way as the Hud SDK releases. Use the tag that matches the SDK version you run.
+## Releases
+
+This repository has its own semver versions, independent of the Hud SDK. A release is cut by pushing a tag: the
+`publish-templates` workflow uploads the CloudFormation templates to `templates/<version>/` in the
+`hud-cloudformation-templates` bucket, and copies them to the flat `templates/` prefix that the quick-create links use.
+A version that is already published isn't overwritten.
+
+Clone the latest release, not a tag that matches your SDK version:
 
 ```bash
-VERSION=<release tag>   # e.g. the SDK version you run
+VERSION=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/code-hud/hud-opensearch-resources | head -1 | cut -d/ -f3)
 git clone --depth 1 --branch "${VERSION}" https://github.com/code-hud/hud-opensearch-resources
 cd hud-opensearch-resources
 ```
 
 Commands in both guides run from the repository root.
+
+Check that the release supports the Hud SDK version you run:
+
+| Resources version | Supported Hud SDK versions |
+| --- | --- |
+| 1.12.4 | 1.12.1 and later |
+
+The minimum SDK version is known when a release is cut. The upper bound is added later, when an SDK release changes
+telemetry names; that SDK release ships together with a new release here.
 
 ## License
 
