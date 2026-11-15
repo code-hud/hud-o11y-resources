@@ -161,9 +161,10 @@ Differences from Hud's own detection:
 - The p90 is a native-histogram quantile, not Hud's DDSketch; the in-progress hour is not part of the current window; Hud's requirement of a degraded source function is not reproduced, so these alert more often than Hud.
 - There is no flow-type selector, so custom and queue flows are included although Hud only runs degradation on endpoint and Kafka entities.
 - `hud-function-day-over-week.rules.yaml` is inert until the `code_function_name` regex (`__NO_FUNCTION_SELECTED__`) is set to the functions you watch. It is expensive: it queries per-function series over 8 days.
+- `HudErrorRateSpike` divides SQS flows by `hud_flow_messages_total` and every other flow by the duration histogram count, the same split as `HudFlowErrors`. A flow has one type, so the two denominators do not both match.
 
 The hourly recording rules (`hud-hourly`) are not in this folder: the CloudFormation templates install them, see [Hourly recording rules](../deploy/README.md#hourly-recording-rules).
 
 ## Development
 
-`python3 -m unittest discover -s opensearch-ui/tests` runs the loader's tests against the dashboards in `opensearch-ui/dashboards/`. The `dashboard-loader-tests` workflow runs them on every pull request that changes `opensearch-ui/`, on Python 3.10 (the minimum) and 3.14.
+`python3 -m unittest discover -s opensearch-ui/tests` runs the loader's tests against the dashboards in `opensearch-ui/dashboards/` and checks the alert rules in `opensearch-ui/rules/`. The `dashboard-loader-tests` workflow runs them on every pull request that changes `opensearch-ui/`, on Python 3.10 (the minimum) and 3.14. `promtool check rules`, when `promtool` is on `PATH`, parses every rule file as part of that run.

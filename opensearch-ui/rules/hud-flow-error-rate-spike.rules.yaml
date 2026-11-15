@@ -6,7 +6,9 @@
 # A fingerprint with no baseline series (new in the last 8 days) never fires here; HudFlowErrors covers new errors at >= 1%.
 # The baseline subquery steps are epoch-aligned hours and end one hour before now ("offset 1h"), so it excludes the window checked.
 # Baseline hours count only when the flow had >= 20 invocations.
-# Cumulative counters and native histograms: increase() and histogram_count(), as in the other Hud rules. All flow types, no selector.
+# Cumulative counters and native histograms: increase() and histogram_count(), as in the other Hud rules.
+# All flow types, no selector. SQS divides by hud_flow_messages_total; every other type by the duration histogram count
+# (the same split as HudFlowErrors). A flow is one type, so the two denominators do not both match.
 groups:
   - name: hud-error-rate-spike
     interval: 1h
@@ -21,7 +23,7 @@ groups:
               ))
                 / on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left ()
                 (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
-                histogram_count(increase(code_flow_duration_seconds[1h]))
+                histogram_count(increase(code_flow_duration_seconds{code_flow_type!="sqs"}[1h])) or increase(hud_flow_messages_total{code_flow_type="sqs"}[1h])
               ))
               )
               > on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route, issue_fingerprint)
@@ -34,12 +36,12 @@ groups:
               ))
                       / on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) group_left ()
                       (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
-                histogram_count(increase(code_flow_duration_seconds[1h]))
+                histogram_count(increase(code_flow_duration_seconds{code_flow_type!="sqs"}[1h])) or increase(hud_flow_messages_total{code_flow_type="sqs"}[1h])
               ))
                     )
                     and on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
                     (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
-                histogram_count(increase(code_flow_duration_seconds[1h]))
+                histogram_count(increase(code_flow_duration_seconds{code_flow_type!="sqs"}[1h])) or increase(hud_flow_messages_total{code_flow_type="sqs"}[1h])
               )) >= 20
                   )[8d:1h] offset 1h
                 )
@@ -48,7 +50,7 @@ groups:
           )
           and on (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route)
           (sum by (job, deployment_environment_name, code_flow_type, code_flow_name, http_request_method, http_route) (
-                histogram_count(increase(code_flow_duration_seconds[1h]))
+                histogram_count(increase(code_flow_duration_seconds{code_flow_type!="sqs"}[1h])) or increase(hud_flow_messages_total{code_flow_type="sqs"}[1h])
               )) >= 50
         for: 0m
         labels:
