@@ -93,7 +93,7 @@ Parameters:
     AllowedValues:
     - merge
     - convert
-    Description: merge = function metrics (code.function.*) from all your app instances add into one series per collector task and deployment, labelled with deployment_id, telemetry_sdk_version and the environment, namespace and cloud; for totals across deployments use sum without (deployment_id, telemetry_sdk_version). Flow and process metrics stay one series per app instance. convert = one series per app instance for every metric.
+    Description: merge = function metrics (code.function.*) from all your app instances add into one series per collector task and deployment, labelled with deployment_id and the environment, namespace and cloud; for totals across deployments use sum without (deployment_id). Flow and process metrics stay one series per app instance, with the same labels. convert = one series per app instance for every metric.
   ExportInterval:
     Type: Number
     Default: 300
@@ -719,7 +719,7 @@ Resources:
                 metric_statements:
                   - context: resource
                     statements:
-                      - keep_keys(attributes, ["service.name", "service.namespace", "deployment.environment.name", "deployment.id", "k8s.namespace.name", "cloud.provider", "cloud.region", "telemetry.sdk.version", "hud.identity.version"])
+                      - keep_keys(attributes, ["service.name", "service.namespace", "deployment.environment.name", "deployment.id", "k8s.namespace.name", "cloud.provider", "cloud.region"])
                   - context: datapoint
                     statements:
                       - merge_maps(attributes, resource.attributes, "insert")
@@ -732,7 +732,11 @@ Resources:
                 metric_statements:
                   - context: datapoint
                     statements:
-                      - set(attributes["deployment.environment.name"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil
+                      - set(attributes["deployment.environment.name"], resource.attributes["deployment.environment.name"]) where resource.attributes["deployment.environment.name"] != nil and resource.attributes["deployment.environment.name"] != ""
+                      - set(attributes["deployment.id"], resource.attributes["deployment.id"]) where resource.attributes["deployment.id"] != nil and resource.attributes["deployment.id"] != ""
+                      - set(attributes["k8s.namespace.name"], resource.attributes["k8s.namespace.name"]) where resource.attributes["k8s.namespace.name"] != nil and resource.attributes["k8s.namespace.name"] != ""
+                      - set(attributes["cloud.provider"], resource.attributes["cloud.provider"]) where resource.attributes["cloud.provider"] != nil and resource.attributes["cloud.provider"] != ""
+                      - set(attributes["cloud.region"], resource.attributes["cloud.region"]) where resource.attributes["cloud.region"] != nil and resource.attributes["cloud.region"] != ""
               transform/restamp:
                 metric_statements:
                   - context: datapoint
