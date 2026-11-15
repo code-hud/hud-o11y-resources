@@ -266,16 +266,18 @@ aws cloudformation deploy --stack-name hud-hourly-rules --template-file deploy/a
 
 The templates are published to `https://hud-cloudformation-templates.s3.amazonaws.com/templates/`, one folder per
 release (`templates/<version>/`), plus the latest release at `templates/` itself, which the launch links in these
-docs use. The version is the release tag. Pushing a tag runs the `publish-templates` workflow, which runs cfn-lint
-and `deploy/scripts/publish-templates.sh <tag>` (you can also run the workflow by hand with a tag). It needs the
-`TEMPLATES_PUBLISH_ROLE_ARN` repository variable; see the workflow file.
+docs use. The version is the release tag, `X.Y.Z` (no pre-releases). Pushing an `X.Y.Z` tag runs the
+`publish-templates` workflow, which runs cfn-lint and `deploy/scripts/publish-templates.sh <tag>` (you can also run
+the workflow by hand with an `X.Y.Z` tag). It needs the `TEMPLATES_PUBLISH_ROLE_ARN` repository variable and fails
+without it; see the workflow file.
 
 `publish-templates.sh` (needs PyYAML) checks that the generated templates are up to date, then uploads every `deploy/aws/*.yaml` to
-`templates/<version>/` and then to `templates/`. In each copy it sets the `TemplatesUrl` default to
-`templates/<version>`, so a parent always nests the `hud-access.yaml` and `hud-hourly-rules.yaml` published with it,
-even when you launch it from `templates/`. It doesn't overwrite a published version unless you set `FORCE=1`, and
-`LATEST=0` leaves `templates/` alone. `--dryrun` only renders the files (into `OUT`, a temp dir by default) and
-prints the uploads:
+`templates/<version>/`, and to `templates/` only if the version is the highest `X.Y.Z` tag in the repository. In each
+copy it sets the `TemplatesUrl` default to `templates/<version>`, so a parent always nests the `hud-access.yaml` and
+`hud-hourly-rules.yaml` published with it, even when you launch it from `templates/`. It never overwrites a published
+version, and stops unless S3 answers that `templates/<version>/hud.yaml` doesn't exist. `--dryrun` only renders the
+files (into `OUT`, a temp dir by default) and prints the uploads; `deploy/scripts/test-publish-templates.sh` checks
+which versions update `templates/`:
 
 ```sh
 deploy/scripts/publish-templates.sh --dryrun 1.2.3
@@ -292,8 +294,8 @@ promtool check rules /tmp/hud-hourly.rules.yaml
 ```
 
 Then deploy it on its own to a test workspace (see [Hourly recording rules](#hourly-recording-rules)). To test a
-change to any nested template in place, publish to a bucket of yours (`BUCKET=<bucket> LATEST=0
-deploy/scripts/publish-templates.sh test-1`) and launch from it
+change to any nested template in place, publish to a bucket of yours (`BUCKET=<bucket>
+deploy/scripts/publish-templates.sh test-1`; a version that isn't a tag leaves `templates/` alone) and launch from it
 (`BASE_URL=https://<bucket>.s3.amazonaws.com/templates/test-1 deploy/scripts/quick-create-link.sh`).
 
 The `collector-bump` workflow opens a PR that points the templates and Helm values at a new `ghcr.io/code-hud/hud-otel-collector` tag. hud-otel-collector's release workflow triggers it; you can also run it by hand with the tag.

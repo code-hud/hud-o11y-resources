@@ -1,13 +1,14 @@
 name: publish-templates
 
 # Publishes deploy/aws/*.yaml with deploy/scripts/publish-templates.sh: to templates/<version>/ in the
-# hud-cloudformation-templates bucket and to its flat templates/ prefix. Runs on a release tag (the version is the
-# tag), or by hand with the version (a tag or branch to check out).
+# hud-cloudformation-templates bucket, and to its flat templates/ prefix when the version is the highest X.Y.Z tag.
+# Runs on an X.Y.Z release tag (the version is the tag), or by hand with an X.Y.Z tag.
 # Needs the repository variable TEMPLATES_PUBLISH_ROLE_ARN: an IAM role this workflow assumes with GitHub OIDC, with
 # s3:PutObject and s3:GetObject on hud-cloudformation-templates/templates/* and s3:ListBucket on the bucket.
 on:
   push:
-    tags: ["*"]
+    # Filter globs only; the job checks the exact X.Y.Z form.
+    tags: ["[0-9]*.[0-9]*.[0-9]*"]
   workflow_dispatch:
     inputs:
       version:
@@ -22,14 +23,18 @@ concurrency: publish-templates
 
 jobs:
   publish:
-    if: vars.TEMPLATES_PUBLISH_ROLE_ARN != ''
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version || github.ref_name }}
+      ROLE_ARN: ${{ vars.TEMPLATES_PUBLISH_ROLE_ARN }}
     steps:
+      - run: |
+          [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must be X.Y.Z: $VERSION"; exit 1; }
+          [[ $ROLE_ARN ]] || { echo "::error::repository variable TEMPLATES_PUBLISH_ROLE_ARN is not set"; exit 1; }
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.version || github.ref }}
+          ref: refs/tags/${{ env.VERSION }}
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -37,6 +42,6 @@ jobs:
       - run: cfn-lint deploy/aws/*.yaml deploy/aws/parts/*.yaml
       - uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.TEMPLATES_PUBLISH_ROLE_ARN }}
+          role-to-assume: ${{ env.ROLE_ARN }}
           aws-region: us-east-1
       - run: deploy/scripts/publish-templates.sh "$VERSION"
