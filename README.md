@@ -49,7 +49,7 @@ Check that the release supports the Hud SDK version you run:
 
 | Resources version | Supported Hud SDK versions |
 | --- | --- |
-| 1.12.4 | 1.12.1 and later |
+| 1.0.0 | 1.12.1 and later |
 
 The minimum SDK version is known when a release is cut. The upper bound is added later, when an SDK release changes
 telemetry names; that SDK release ships together with a new release here.
